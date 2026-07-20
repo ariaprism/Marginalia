@@ -1,0 +1,29 @@
+:root {
+  font-family: Georgia, 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', serif;
+  color: #3f332b;
+  background: #e9dfce;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --ink: #3f332b;
+  --muted: #807166;
+  --paper: #f8f0df;
+  --paper-light: #fffaf0;
+  --rose: #b87e77;
+  --gold: #b18a50;
+  --mint: #7d917d;
+  --line: rgba(91, 66, 48, 0.2);
+}
+
+* { box-sizing: border-box; }
+html { min-width: 320px; background: #e9dfce; }
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: radial-gradient(circle at 18% 12%, rgba(255, 250, 232, 0.85), transparent 32%), linear-gradient(135deg, #eee6d8 0%, #e5d8c3 100%);
+}
+button, input, textarea, select { font: inherit; }
+button { color: inherit; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid #a96f69; outline-offset: 3px; }
+#root { min-height: 100vh; }
