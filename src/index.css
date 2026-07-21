@@ -1,5 +1,9 @@
 :root {
-  font-family: Georgia, 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', serif;
+  --font-display: Georgia, 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  --font-reading-serif: Georgia, 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'STSong', serif;
+  --font-reading-sans: var(--font-ui);
+  font-family: var(--font-ui);
   color: #3f332b;
   background: #e9dfce;
   font-synthesis: none;

@@ -11,7 +11,6 @@ import {
   MessageSquareText,
   SunMoon,
   Type,
-  Underline,
   Upload,
   X,
 } from 'lucide-react'
@@ -27,6 +26,8 @@ import './App.css'
 type ShelfFilter = 'all' | 'reading' | 'wish' | 'finished'
 type ReaderPanel = 'toc' | 'traces' | 'stats' | 'type' | null
 type ReaderTheme = 'day' | 'night'
+type ReaderTypeface = 'serif' | 'sans'
+type ShelfView = 'list' | 'covers'
 type Screen = 'shelf' | 'room' | 'reader'
 type BookStatus = Exclude<ShelfFilter, 'all'>
 
@@ -47,13 +48,21 @@ type Book = {
 type Trace = {
   id: string
   chapterIndex: number
+  sentenceStart?: number
+  sentenceEnd?: number
+  highlighted?: boolean
   chapter: string
   quote: string
-  fox?: string
+  foxNotes?: NoteEntry[]
   fish?: string
+  fishAt?: string
 }
 
+type NoteEntry = { id: string; text: string; createdAt: string }
+
 type ReflowAnchor = { chapterIndex: number; ratio: number }
+type SentenceSelection = { chapterIndex: number; start: number; end: number }
+type BubblePosition = { left: number; top: number; placement: 'above' | 'below' }
 
 const books: Book[] = [
   {
@@ -167,29 +176,56 @@ const chapters = [
   },
 ]
 
+const sentenceSegmenter = new Intl.Segmenter('zh-CN', { granularity: 'sentence' })
+const segmentedChapters = chapters.map((chapter) => {
+  let sentenceIndex = 0
+  const paragraphs = chapter.paragraphs.map((paragraph) => (
+    Array.from(sentenceSegmenter.segment(paragraph), ({ segment }) => ({
+      index: sentenceIndex++,
+      text: segment,
+    }))
+  ))
+  return { paragraphs, sentences: paragraphs.flat() }
+})
+
 const initialTraces: Trace[] = [
   {
     id: 'trace-1',
     chapterIndex: 0,
     chapter: '第一章 · 雨先抵达',
     quote: '句子需要重量。',
-    fox: '有些话打在屏幕上很轻，写进书里以后却会留下来。',
+    highlighted: true,
+    foxNotes: [{ id: 'fox-note-1', text: '有些话打在屏幕上很轻，写进书里以后却会留下来。', createdAt: '07/14/18：47' }],
   },
   {
     id: 'trace-2',
     chapterIndex: 1,
     chapter: '第二章 · 没有寄出的页码',
     quote: '我以为有人提前知道了我的心事。',
-    fox: '读到这里时，好像被一本陌生的书认了出来。',
+    highlighted: true,
+    foxNotes: [{ id: 'fox-note-2', text: '读到这里时，好像被一本陌生的书认了出来。', createdAt: '07/15/16：42' }],
     fish: '也许书并不知道，只是它替那一刻保留了一个位置。',
+    fishAt: '07/15/17：00',
   },
   {
     id: 'trace-3',
     chapterIndex: 3,
     chapter: '第四章 · 替沉默装订',
     quote: '空白并不比文字轻。',
+    highlighted: true,
   },
 ]
+
+function formatTraceTime(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())}/${pad(date.getHours())}：${pad(date.getMinutes())}`
+}
+
+function traceLineClass(trace: Trace) {
+  if (trace.highlighted) return 'trace-line-highlight'
+  if (trace.foxNotes?.length) return 'trace-line-annotation'
+  return ''
+}
 
 const filters: { id: ShelfFilter; label: string }[] = [
   { id: 'all', label: '全部' },
@@ -197,6 +233,17 @@ const filters: { id: ShelfFilter; label: string }[] = [
   { id: 'wish', label: '想读' },
   { id: 'finished', label: '已读完' },
 ]
+
+function ChapterTraceMark() {
+  return (
+    <svg className="chapter-trace-mark" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6.1 2.8c3.6.2 7.3-.2 11.1 0 .9 0 1.5.6 1.5 1.5-.2 5.1.2 10.2 0 15.4 0 .9-.6 1.5-1.5 1.5-3.7-.2-7.4.2-11.1 0-.9 0-1.5-.6-1.5-1.5.2-5.2-.2-10.3 0-15.4 0-.9.6-1.5 1.5-1.5Z" />
+      <path d="M7.7 7.1c2.1-.3 4.1.3 6.4-.1M7.5 10.5c3 .4 5.3-.4 8.8.1M7.8 13.8c1.7-.2 3.1.3 4.8 0" />
+      <circle className="trace-dot" cx="15.9" cy="15.6" r=".75" />
+      <circle className="trace-dot" cx="9.1" cy="17.7" r=".55" />
+    </svg>
+  )
+}
 
 function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
   const catalogueNumber = String(books.findIndex((item) => item.id === book.id) + 1).padStart(2, '0')
@@ -209,7 +256,7 @@ function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
   )
 }
 
-function BrandHeader({ onBack }: { onBack?: () => void }) {
+function BrandHeader({ onBack, shelfView, onToggleView }: { onBack?: () => void; shelfView?: ShelfView; onToggleView?: () => void }) {
   if (onBack) {
     return (
       <header className="shelf-header room-header">
@@ -222,10 +269,20 @@ function BrandHeader({ onBack }: { onBack?: () => void }) {
 
   return (
     <header className="shelf-header">
-      <div className="brand-lockup">
-        <span className="brand-flourish" aria-hidden="true"><i>M</i></span>
+      <button
+        className="brand-lockup brand-toggle"
+        type="button"
+        onClick={onToggleView}
+        aria-label={shelfView === 'covers' ? '切换为列表书架' : '切换为封面书架'}
+        title={shelfView === 'covers' ? '切换为列表书架' : '切换为封面书架'}
+      >
+        <span className="brand-flourish" aria-hidden="true">
+          <span className="seal-curve seal-curve-outer" />
+          <span className="seal-curve seal-curve-inner" />
+          <i>M</i>
+        </span>
         <div><p className="brand-name">Marginalia</p><p className="brand-subtitle">在正文之外，我们相遇。</p></div>
-      </div>
+      </button>
       <button className="import-book" type="button" aria-label="藏入一本书"><Upload size={18} strokeWidth={1.5} /><span>藏入一本书</span></button>
     </header>
   )
@@ -233,6 +290,7 @@ function BrandHeader({ onBack }: { onBack?: () => void }) {
 
 function App() {
   const [screen, setScreen] = useState<Screen>('shelf')
+  const [shelfView, setShelfView] = useState<ShelfView>('list')
   const [roomBook, setRoomBook] = useState<Book>(books[0])
   const [filter, setFilter] = useState<ShelfFilter>('all')
   const [pageIndex, setPageIndex] = useState(0)
@@ -244,8 +302,14 @@ function App() {
   const [fontSize, setFontSize] = useState(19)
   const [lineHeight, setLineHeight] = useState(1.95)
   const [pageMargin, setPageMargin] = useState(12)
+  const [readerTypeface, setReaderTypeface] = useState<ReaderTypeface>('serif')
   const [selectedText, setSelectedText] = useState('')
+  const [sentenceSelection, setSentenceSelection] = useState<SentenceSelection | null>(null)
+  const [bubblePosition, setBubblePosition] = useState<BubblePosition | null>(null)
   const [noteComposerOpen, setNoteComposerOpen] = useState(false)
+  const [noteMenuTargetId, setNoteMenuTargetId] = useState<string | null>(null)
+  const [noteTargetTraceId, setNoteTargetTraceId] = useState<string | null>(null)
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState('')
   const [traces, setTraces] = useState<Trace[]>(initialTraces)
   const [activeTrace, setActiveTrace] = useState<Trace | null>(null)
@@ -269,9 +333,31 @@ function App() {
     return active
   }, [chapterStarts, pageIndex])
 
+  const selectedRangeTrace = useMemo(() => {
+    if (!sentenceSelection) return undefined
+    return traces.find((trace) => trace.chapterIndex === sentenceSelection.chapterIndex
+      && trace.sentenceStart === sentenceSelection.start
+      && trace.sentenceEnd === sentenceSelection.end)
+  }, [sentenceSelection, traces])
+  const selectedRangeIsHighlighted = Boolean(selectedRangeTrace && selectedRangeTrace.highlighted !== false)
+  const activeNoteTrace = useMemo(
+    () => traces.find((trace) => trace.id === noteTargetTraceId),
+    [noteTargetTraceId, traces],
+  )
+  const noteQuoteLineClass = (activeNoteTrace ?? selectedRangeTrace)?.highlighted
+    ? 'trace-line-highlight'
+    : 'trace-line-annotation'
+  const noteEntries = activeNoteTrace?.foxNotes ?? selectedRangeTrace?.foxNotes ?? []
+
   const showToast = (message: string) => {
     setToast(message)
     window.setTimeout(() => setToast(''), 2200)
+  }
+
+  const toggleShelfView = () => {
+    const next = shelfView === 'list' ? 'covers' : 'list'
+    setShelfView(next)
+    showToast(next === 'covers' ? '已切换为封面书架。' : '已切换为列表书架。')
   }
 
   const recalculatePagination = useCallback(() => {
@@ -316,7 +402,46 @@ function App() {
     const observer = new ResizeObserver(recalculatePagination)
     observer.observe(viewport)
     return () => observer.disconnect()
-  }, [screen, fontSize, lineHeight, pageMargin, recalculatePagination])
+  }, [screen, fontSize, lineHeight, pageMargin, readerTypeface, recalculatePagination])
+
+  useLayoutEffect(() => {
+    if (!sentenceSelection || screen !== 'reader') {
+      setBubblePosition(null)
+      return
+    }
+
+    const updateBubblePosition = () => {
+      const sentenceElements = Array.from(document.querySelectorAll<HTMLElement>(
+        `[data-chapter-index="${sentenceSelection.chapterIndex}"] [data-sentence-index]`,
+      )).filter((element) => {
+        const index = Number(element.dataset.sentenceIndex)
+        return index >= sentenceSelection.start && index <= sentenceSelection.end
+      })
+      const rects = sentenceElements.flatMap((element) => Array.from(element.getClientRects()))
+        .filter((rect) => rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.left < window.innerWidth && rect.bottom > 0 && rect.top < window.innerHeight)
+      if (!rects.length) {
+        setBubblePosition(null)
+        return
+      }
+
+      const leftEdge = Math.min(...rects.map((rect) => rect.left))
+      const rightEdge = Math.max(...rects.map((rect) => rect.right))
+      const topEdge = Math.min(...rects.map((rect) => rect.top))
+      const bottomEdge = Math.max(...rects.map((rect) => rect.bottom))
+      const bubbleHalfWidth = Math.min(114, (window.innerWidth - 24) / 2)
+      const left = Math.max(12 + bubbleHalfWidth, Math.min(window.innerWidth - 12 - bubbleHalfWidth, (leftEdge + rightEdge) / 2))
+      const placeAbove = topEdge >= 66
+      setBubblePosition({
+        left,
+        top: placeAbove ? topEdge - 54 : bottomEdge + 10,
+        placement: placeAbove ? 'above' : 'below',
+      })
+    }
+
+    updateBubblePosition()
+    window.addEventListener('resize', updateBubblePosition)
+    return () => window.removeEventListener('resize', updateBubblePosition)
+  }, [fontSize, lineHeight, pageIndex, pageMargin, readerTypeface, screen, sentenceSelection])
 
   const rememberReflowAnchor = () => {
     const start = chapterStarts[currentChapterIndex] ?? 0
@@ -330,7 +455,38 @@ function App() {
 
   const clearSelection = () => {
     window.getSelection()?.removeAllRanges()
+    setSentenceSelection(null)
+    setBubblePosition(null)
     setSelectedText('')
+  }
+
+  const applySentenceSelection = (selection: SentenceSelection | null) => {
+    setSentenceSelection(selection)
+    if (!selection) {
+      setSelectedText('')
+      return
+    }
+    const sentences = segmentedChapters[selection.chapterIndex].sentences
+    setSelectedText(sentences.slice(selection.start, selection.end + 1).map((sentence) => sentence.text).join(''))
+    setChromeVisible(false)
+    setPanel(null)
+    setActiveTrace(null)
+  }
+
+  const handleSentenceClick = (event: React.MouseEvent<HTMLSpanElement>, chapterIndex: number, sentenceIndex: number) => {
+    event.stopPropagation()
+    if (!sentenceSelection || sentenceSelection.chapterIndex !== chapterIndex) {
+      applySentenceSelection({ chapterIndex, start: sentenceIndex, end: sentenceIndex })
+      return
+    }
+
+    const { start, end } = sentenceSelection
+    if (start === end && sentenceIndex === start) applySentenceSelection(null)
+    else if (sentenceIndex === start) applySentenceSelection({ chapterIndex, start: start + 1, end })
+    else if (sentenceIndex === end) applySentenceSelection({ chapterIndex, start, end: end - 1 })
+    else if (sentenceIndex === start - 1) applySentenceSelection({ chapterIndex, start: sentenceIndex, end })
+    else if (sentenceIndex === end + 1) applySentenceSelection({ chapterIndex, start, end: sentenceIndex })
+    else applySentenceSelection({ chapterIndex, start: sentenceIndex, end: sentenceIndex })
   }
 
   const openReaderAtChapter = (chapterIndex: number) => {
@@ -357,7 +513,10 @@ function App() {
   const handleReaderClick = (event: React.MouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement
     if (target.closest('button, mark, textarea, input, select')) return
-    if (window.getSelection()?.toString().trim()) return
+    if (sentenceSelection) {
+      clearSelection()
+      return
+    }
     const rect = event.currentTarget.getBoundingClientRect()
     const position = (event.clientX - rect.left) / rect.width
     if (position < 0.4) turnToPage(pageIndex - 1)
@@ -365,43 +524,152 @@ function App() {
     else { setChromeVisible((visible) => !visible); setPanel(null) }
   }
 
-  const handleTextSelection = () => {
-    window.setTimeout(() => {
-      const text = window.getSelection()?.toString().trim() ?? ''
-      if (text.length > 1) {
-        setSelectedText(text.slice(0, 180))
-        setChromeVisible(false)
-        setPanel(null)
-        setActiveTrace(null)
-      }
-    }, 0)
-  }
-
   const saveHighlight = () => {
-    if (!selectedText) return
-    setTraces((current) => [...current, {
-      id: `trace-${Date.now()}`,
-      chapterIndex: currentChapterIndex,
-      chapter: `${chapters[currentChapterIndex].chapter} · ${chapters[currentChapterIndex].title}`,
-      quote: selectedText,
-    }])
+    if (!selectedText || !sentenceSelection) return
+    const chapterIndex = sentenceSelection?.chapterIndex ?? currentChapterIndex
+    setTraces((current) => {
+      const existingIndex = current.findIndex((trace) => trace.chapterIndex === chapterIndex
+        && trace.sentenceStart === sentenceSelection.start
+        && trace.sentenceEnd === sentenceSelection.end)
+      if (existingIndex >= 0) {
+        return current.map((trace, index) => index === existingIndex
+          ? { ...trace, quote: selectedText, highlighted: true }
+          : trace)
+      }
+      return [...current, {
+        id: `trace-${Date.now()}`,
+        chapterIndex,
+        sentenceStart: sentenceSelection.start,
+        sentenceEnd: sentenceSelection.end,
+        highlighted: true,
+        chapter: `${chapters[chapterIndex].chapter} · ${chapters[chapterIndex].title}`,
+        quote: selectedText,
+      }]
+    })
     clearSelection()
     showToast('这句话已经留在页边。')
   }
 
+  const cancelHighlight = () => {
+    if (!sentenceSelection) return
+    setTraces((current) => current.flatMap((trace) => {
+      const isCurrentRange = trace.chapterIndex === sentenceSelection.chapterIndex
+        && trace.sentenceStart === sentenceSelection.start
+        && trace.sentenceEnd === sentenceSelection.end
+      if (!isCurrentRange) return [trace]
+      if (trace.foxNotes?.length || trace.fish) return [{ ...trace, highlighted: false }]
+      return []
+    }))
+    clearSelection()
+    showToast('已经取消这处划线。')
+  }
+
+  const openSentenceNoteSheet = () => {
+    setNoteTargetTraceId(selectedRangeTrace?.id ?? null)
+    setEditingNoteId(null)
+    setNoteDraft('')
+    setNoteMenuTargetId(null)
+    setNoteComposerOpen(true)
+  }
+
+  const closeNoteSheet = () => {
+    setNoteComposerOpen(false)
+    setNoteMenuTargetId(null)
+    setNoteTargetTraceId(null)
+    setEditingNoteId(null)
+    setNoteDraft('')
+    clearSelection()
+  }
+
   const saveNote = () => {
     if (!selectedText || !noteDraft.trim()) return
-    setTraces((current) => [...current, {
-      id: `trace-${Date.now()}`,
-      chapterIndex: currentChapterIndex,
-      chapter: `${chapters[currentChapterIndex].chapter} · ${chapters[currentChapterIndex].title}`,
-      quote: selectedText,
-      fox: noteDraft.trim(),
-    }])
+    const chapterIndex = sentenceSelection?.chapterIndex ?? currentChapterIndex
+    const targetId = noteTargetTraceId ?? selectedRangeTrace?.id ?? `trace-${Date.now()}`
+    const noteTimestamp = formatTraceTime(new Date())
+    const noteId = editingNoteId ?? `fox-note-${Date.now()}-${noteEntries.length}`
+    const nextNote = { id: noteId, text: noteDraft.trim(), createdAt: noteTimestamp }
+    setTraces((current) => {
+      if (current.some((trace) => trace.id === targetId)) {
+        return current.map((trace) => {
+          if (trace.id !== targetId) return trace
+          const foxNotes = trace.foxNotes ?? []
+          return {
+            ...trace,
+            quote: selectedText,
+            foxNotes: editingNoteId
+              ? foxNotes.map((note) => note.id === editingNoteId ? { ...note, text: nextNote.text } : note)
+              : [...foxNotes, nextNote],
+          }
+        })
+      }
+      const existingIndex = sentenceSelection ? current.findIndex((trace) => trace.chapterIndex === chapterIndex
+        && trace.sentenceStart === sentenceSelection.start
+        && trace.sentenceEnd === sentenceSelection.end) : -1
+      if (existingIndex >= 0) {
+        return current.map((trace, index) => index === existingIndex
+          ? { ...trace, quote: selectedText, foxNotes: [...(trace.foxNotes ?? []), nextNote], highlighted: trace.highlighted ?? false }
+          : trace)
+      }
+      return [...current, {
+        id: targetId,
+        chapterIndex,
+        sentenceStart: sentenceSelection?.start,
+        sentenceEnd: sentenceSelection?.end,
+        highlighted: false,
+        chapter: `${chapters[chapterIndex].chapter} · ${chapters[chapterIndex].title}`,
+        quote: selectedText,
+        foxNotes: [nextNote],
+      }]
+    })
+    setNoteTargetTraceId(targetId)
+    setEditingNoteId(null)
     setNoteDraft('')
-    setNoteComposerOpen(false)
-    clearSelection()
+    setNoteMenuTargetId(null)
     showToast('批注已经夹进这一页。')
+  }
+
+  const reviseNote = (note: NoteEntry) => {
+    setEditingNoteId(note.id)
+    setNoteDraft(note.text)
+    setNoteMenuTargetId(null)
+  }
+
+  const removeNote = (noteId: string) => {
+    if (!noteTargetTraceId) return
+    setTraces((current) => current.flatMap((trace) => {
+      if (trace.id !== noteTargetTraceId) return [trace]
+      const foxNotes = (trace.foxNotes ?? []).filter((note) => note.id !== noteId)
+      if (foxNotes.length || trace.highlighted || trace.fish) return [{ ...trace, foxNotes }]
+      return []
+    }))
+    if (editingNoteId === noteId) {
+      setEditingNoteId(null)
+      setNoteDraft('')
+    }
+    setNoteMenuTargetId(null)
+    showToast('这段文字已经抹去。')
+  }
+
+  const reviseActiveTraceNote = (trace: Trace, note: NoteEntry) => {
+    setSelectedText(trace.quote)
+    setNoteTargetTraceId(trace.id)
+    setEditingNoteId(note.id)
+    setNoteDraft(note.text)
+    setNoteMenuTargetId(null)
+    setActiveTrace(null)
+    setNoteComposerOpen(true)
+  }
+
+  const removeActiveTraceNote = (trace: Trace, noteId: string) => {
+    setTraces((current) => current.flatMap((item) => {
+      if (item.id !== trace.id) return [item]
+      const foxNotes = (item.foxNotes ?? []).filter((note) => note.id !== noteId)
+      if (foxNotes.length || item.highlighted || item.fish) return [{ ...item, foxNotes }]
+      return []
+    }))
+    setNoteMenuTargetId(null)
+    setActiveTrace(null)
+    showToast('这段文字已经抹去。')
   }
 
   const jumpToChapter = (chapterIndex: number) => {
@@ -420,6 +688,7 @@ function App() {
       chapter: `${chapters[chapterIndex].chapter} · ${chapters[chapterIndex].title}`,
       quote,
     })
+    setNoteMenuTargetId(null)
     setPanel(null)
     setChromeVisible(false)
   }
@@ -449,7 +718,7 @@ function App() {
         </section>
         {isSample && (
           <section className="room-chapters">
-            <div className="room-section-title"><h2>章节与痕迹</h2></div>
+            <div className="room-section-title"><ChapterTraceMark /><h2>章节与痕迹</h2></div>
             {chapters.map((chapter, index) => {
               const chapterTraces = traces.filter((trace) => trace.chapterIndex === index)
               return (
@@ -461,8 +730,8 @@ function App() {
                     <div className="room-trace-list">
                       {chapterTraces.map((trace) => (
                         <button type="button" key={trace.id} onClick={() => openReaderAtChapter(index)}>
-                          <q>{trace.quote}</q>
-                          {trace.fox && <p><b>小狐狸</b>：{trace.fox}</p>}
+                          <q><span className={traceLineClass(trace)}>{trace.quote}</span></q>
+                          {trace.foxNotes?.map((note) => <p key={note.id}><b>小狐狸</b>：{note.text}</p>)}
                           {trace.fish && <p className="fish-note"><b>小鱼</b>：{trace.fish}</p>}
                         </button>
                       ))}
@@ -500,8 +769,12 @@ function App() {
         <article
           className="reader-page reader-page-v2"
           onClick={handleReaderClick}
-          onMouseUp={handleTextSelection}
-          style={{ '--reader-font-size': `${fontSize}px`, '--reader-line-height': lineHeight, '--reader-margin': `${pageMargin}%` } as React.CSSProperties}
+          style={{
+            '--reader-font-size': `${fontSize}px`,
+            '--reader-line-height': lineHeight,
+            '--reader-margin': `${pageMargin}%`,
+            '--reader-font-family': `var(--font-reading-${readerTypeface})`,
+          } as React.CSSProperties}
         >
           <div className="page-grain" aria-hidden="true" />
           <div className="running-header">{currentChapter.chapter} · {currentChapter.title}</div>
@@ -512,14 +785,38 @@ function App() {
                   <div className="chapter-heading">
                     <span>{chapter.chapter}</span><h1>{chapter.title}</h1><p>{chapter.kicker}</p>
                   </div>
-                  {chapter.paragraphs.map((paragraph, paragraphIndex) => {
-                    const parts = paragraph.split(chapter.highlight)
-                    return (
-                      <p key={paragraph} className={paragraphIndex === 0 ? 'opening-paragraph' : ''}>
-                        {parts.length === 1 ? paragraph : <>{parts[0]}<mark onClick={() => openExistingTrace(chapterIndex, chapter.highlight)}>{chapter.highlight}</mark>{parts[1]}</>}
-                      </p>
-                    )
-                  })}
+                  {segmentedChapters[chapterIndex].paragraphs.map((paragraph, paragraphIndex) => (
+                    <p key={chapter.paragraphs[paragraphIndex]} className={paragraphIndex === 0 ? 'opening-paragraph' : ''}>
+                      {paragraph.map((sentence) => {
+                        const parts = sentence.text.split(chapter.highlight)
+                        const isSelected = sentenceSelection?.chapterIndex === chapterIndex
+                          && sentence.index >= sentenceSelection.start
+                          && sentence.index <= sentenceSelection.end
+                        const hasUserHighlight = traces.some((trace) => trace.chapterIndex === chapterIndex
+                          && trace.sentenceStart !== undefined
+                          && trace.sentenceEnd !== undefined
+                          && trace.highlighted === true
+                          && sentence.index >= trace.sentenceStart
+                          && sentence.index <= trace.sentenceEnd)
+                        const hasAnnotation = !hasUserHighlight && traces.some((trace) => trace.chapterIndex === chapterIndex
+                          && trace.sentenceStart !== undefined
+                          && trace.sentenceEnd !== undefined
+                          && Boolean(trace.foxNotes?.length)
+                          && sentence.index >= trace.sentenceStart
+                          && sentence.index <= trace.sentenceEnd)
+                        return (
+                          <span
+                            className={`sentence-unit ${isSelected ? 'is-selected' : ''} ${hasUserHighlight ? 'has-user-highlight' : ''} ${hasAnnotation ? 'has-annotation' : ''}`}
+                            data-sentence-index={sentence.index}
+                            key={sentence.index}
+                            onClick={(event) => handleSentenceClick(event, chapterIndex, sentence.index)}
+                          >
+                            {parts.length === 1 ? sentence.text : <>{parts[0]}<mark onClick={(event) => { event.stopPropagation(); openExistingTrace(chapterIndex, chapter.highlight) }}>{chapter.highlight}</mark>{parts[1]}</>}
+                          </span>
+                        )
+                      })}
+                    </p>
+                  ))}
                 </section>
               ))}
             </div>
@@ -530,41 +827,75 @@ function App() {
         {returnPage !== null && <button className="return-slip" type="button" onClick={() => { setPageIndex(returnPage); setReturnPage(null) }}><CornerUpLeft />回到刚才的位置</button>}
 
         {activeTrace && (
-          <section className="trace-detail-sheet" aria-label="划线详情">
-            <div className="trace-detail-heading"><small>{activeTrace.chapter}</small><button type="button" onClick={() => setActiveTrace(null)} aria-label="关闭划线详情"><X /></button></div>
-            <blockquote>“{activeTrace.quote}”</blockquote>
-            {activeTrace.fox ? <p><b>小狐狸</b>{activeTrace.fox}</p> : <button className="empty-note" type="button" onClick={() => { setSelectedText(activeTrace.quote); setActiveTrace(null); setNoteComposerOpen(true) }}>这里还没有文字。写一条批注</button>}
-            {activeTrace.fish && <p className="fish-detail"><b>小鱼</b>{activeTrace.fish}</p>}
-            <div className="trace-detail-actions"><button type="button" onClick={() => showToast('颜色选择会在下一轮继续细化。')}>更换颜色</button><button type="button" onClick={() => showToast('原型暂不删除真实痕迹。')}>删除划线</button></div>
-          </section>
+          <div className="trace-detail-backdrop" onClick={() => { setActiveTrace(null); setNoteMenuTargetId(null) }}>
+            <section
+              className="trace-detail-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label="划线详情"
+              onClick={(event) => event.stopPropagation()}
+              style={{ '--trace-font-family': `var(--font-reading-${readerTypeface})` } as React.CSSProperties}
+            >
+              <blockquote>“<span className={traceLineClass(activeTrace)}>{activeTrace.quote}</span>”</blockquote>
+              {activeTrace.foxNotes?.length ? activeTrace.foxNotes.map((note) => <div className="trace-note-block" key={note.id}>
+                <div className="trace-note-meta"><b>小狐狸</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}>···</button>{noteMenuTargetId === note.id && <span className="note-action-menu trace-note-menu"><button type="button" onClick={() => reviseActiveTraceNote(activeTrace, note)}>修订</button><button type="button" onClick={() => removeActiveTraceNote(activeTrace, note.id)}>抹去文字</button></span>}</span></div>
+                <p>{note.text}</p>
+              </div>) : <button className="empty-note" type="button" onClick={() => { setSelectedText(activeTrace.quote); setNoteTargetTraceId(activeTrace.id); setEditingNoteId(null); setNoteDraft(''); setNoteMenuTargetId(null); setActiveTrace(null); setNoteComposerOpen(true) }}>这里还没有文字。留下一道痕迹</button>}
+              {activeTrace.fish && <div className="trace-note-block fish-detail"><div className="trace-note-meta"><b>小鱼</b><time>{activeTrace.fishAt}</time></div><p>{activeTrace.fish}</p></div>}
+            </section>
+          </div>
         )}
 
-        {selectedText && !noteComposerOpen && (
-          <div className="selection-menu" role="toolbar" aria-label="文字操作">
-            <span className="selected-preview">“{selectedText}”</span>
-            <div><button type="button" onClick={() => { void navigator.clipboard?.writeText(selectedText); showToast('已复制。') }}><Copy />复制</button><button type="button" onClick={saveHighlight}><Highlighter />划线</button><button type="button" onClick={() => setNoteComposerOpen(true)}><MessageSquareText />写批注</button><button className="selection-close" type="button" onClick={clearSelection} aria-label="关闭"><X /></button></div>
-            <div className="mark-options"><Underline /><span className="line-choice" /><span className="line-choice is-wavy" /><i className="color-dot rose" /><i className="color-dot gold" /><i className="color-dot mint" /></div>
+        {selectedText && sentenceSelection && !noteComposerOpen && (
+          <div
+            className={`selection-bubble ${bubblePosition ? `is-${bubblePosition.placement} is-positioned` : ''}`}
+            role="toolbar"
+            aria-label="句子操作"
+            style={{ left: bubblePosition?.left ?? '50%', top: bubblePosition?.top ?? 0 }}
+          >
+            <button type="button" onClick={() => { void navigator.clipboard?.writeText(selectedText); showToast('已复制。'); clearSelection() }}><Copy />复制</button>
+            <button type="button" onClick={selectedRangeIsHighlighted ? cancelHighlight : saveHighlight}><Highlighter />{selectedRangeIsHighlighted ? '抹去' : '划线'}</button>
+            <button type="button" onClick={openSentenceNoteSheet}><MessageSquareText />{selectedRangeTrace?.foxNotes?.length ? '重温' : '留痕'}</button>
           </div>
         )}
 
         {noteComposerOpen && (
-          <section className="note-composer" aria-label="写批注">
-            <div className="note-quote">“{selectedText}”</div><textarea value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="写下此刻想到的事……" autoFocus />
-            <div className="composer-actions"><button type="button" onClick={() => { setNoteComposerOpen(false); setNoteDraft('') }}>取消</button><button className="save-note" type="button" onClick={saveNote}><Check />留下</button></div>
-          </section>
+          <div className="note-backdrop" onClick={closeNoteSheet}>
+            <section
+              className={`note-composer ${noteEntries.length ? 'has-notes' : ''}`}
+              role="dialog"
+              aria-modal="true"
+              aria-label={noteEntries.length ? '重温批注' : '留痕'}
+              onClick={(event) => event.stopPropagation()}
+              style={{ '--trace-font-family': `var(--font-reading-${readerTypeface})` } as React.CSSProperties}
+            >
+              <div className="note-quote">“<span className={noteQuoteLineClass}>{selectedText}</span>”</div>
+              {noteEntries.map((note) => <article className="sent-note" key={note.id}>
+                <div className="sent-note-heading"><b>小狐狸</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}>···</button>{noteMenuTargetId === note.id && <span className="note-action-menu"><button type="button" onClick={() => reviseNote(note)}>修订</button><button type="button" onClick={() => removeNote(note.id)}>抹去文字</button></span>}</span></div>
+                <p>{note.text}</p>
+              </article>)}
+              <textarea value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Thoughts..." autoFocus={!noteEntries.length} />
+              <div className="composer-actions"><button type="button" onClick={() => {
+                if (editingNoteId) {
+                  setEditingNoteId(null)
+                  setNoteDraft('')
+                } else closeNoteSheet()
+              }}>取消</button><button className="save-note" type="button" onClick={saveNote}><Check />留下</button></div>
+            </section>
+          </div>
         )}
 
         {panel && (
           <section className="reader-panel">
             <div className="panel-handle" />
             {panel === 'toc' && <><PanelHeading eyebrow="CONTENTS" title="目录" close={() => setPanel(null)} /><div className="toc-list">{chapters.map((chapter, index) => <button className={index === currentChapterIndex ? 'is-current' : ''} type="button" key={chapter.title} onClick={() => jumpToChapter(index)}><span>{chapter.chapter}</span><strong>{chapter.title}</strong><small>{String((chapterStarts[index] ?? 0) + 1).padStart(2, '0')}</small></button>)}</div></>}
-            {panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={() => setPanel(null)} /><div className="trace-list">{[...traces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => jumpToChapter(trace.chapterIndex)}><small>{trace.chapter}</small><blockquote>“{trace.quote}”</blockquote>{trace.fox && <p><b>小狐狸</b>：{trace.fox}</p>}{trace.fish && <p className="fish-note"><b>小鱼</b>：{trace.fish}</p>}</button>)}</div></>}
+            {panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={() => setPanel(null)} /><div className="trace-list">{[...traces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => jumpToChapter(trace.chapterIndex)}><small>{trace.chapter}</small><blockquote>“<span className={traceLineClass(trace)}>{trace.quote}</span>”</blockquote>{trace.foxNotes?.map((note) => <p key={note.id}><b>小狐狸</b>：{note.text}</p>)}{trace.fish && <p className="fish-note"><b>小鱼</b>：{trace.fish}</p>}</button>)}</div></>}
             {panel === 'stats' && <><PanelHeading eyebrow="READING LIFE" title="阅读统计" close={() => setPanel(null)} /><div className="stats-grid stats-grid-v2"><div><strong>38<sup>%</sup></strong><small>约一小时后读完</small></div><div><strong>4 小时 12 分</strong><small>累计阅读</small></div><div><strong>{traces.length} 条</strong><small>笔记与划线</small></div></div></>}
             {panel === 'type' && <><PanelHeading eyebrow="TYPESETTING" title="排版" close={() => setPanel(null)} /><div className="type-settings">
               <label><span>字号 <small>{fontSize}px</small></span><input type="range" min="16" max="25" value={fontSize} onChange={(event) => { rememberReflowAnchor(); setFontSize(Number(event.target.value)) }} /></label>
               <label><span>行距 <small>{lineHeight.toFixed(1)}</small></span><input type="range" min="1.5" max="2.3" step="0.1" value={lineHeight} onChange={(event) => { rememberReflowAnchor(); setLineHeight(Number(event.target.value)) }} /></label>
               <label><span>页边距 <small>{pageMargin}%</small></span><input type="range" min="7" max="18" value={pageMargin} onChange={(event) => { rememberReflowAnchor(); setPageMargin(Number(event.target.value)) }} /></label>
-              <label><span>字体</span><select defaultValue="serif"><option value="serif">书页宋体</option><option value="song">传统宋体</option><option value="sans">清晰黑体</option></select></label>
+              <label><span>字体</span><select value={readerTypeface} onChange={(event) => { rememberReflowAnchor(); setReaderTypeface(event.target.value as ReaderTypeface) }}><option value="serif">书页宋体</option><option value="sans">清晰黑体</option></select></label>
             </div></>}
           </section>
         )}
@@ -583,28 +914,38 @@ function App() {
 
   return (
     <main className="shelf-shell shelf-shell-v2">
-      <BrandHeader />
+      <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} />
       <nav className="shelf-filters" aria-label="书架分类">
         {filters.map((item) => {
           const count = item.id === 'all' ? books.length : books.filter((book) => book.status === item.id).length
-          return <button type="button" key={item.id} className={filter === item.id ? 'is-active' : ''} onClick={() => setFilter(item.id)} aria-pressed={filter === item.id}><span>{item.label}</span><small>{String(count).padStart(2, '0')}</small></button>
+          return <button type="button" key={item.id} className={filter === item.id ? 'is-active' : ''} onClick={() => setFilter(item.id)} aria-label={`${item.label}，${count} 本`} aria-pressed={filter === item.id}><span>{item.label}</span></button>
         })}
       </nav>
-      <section className="book-list" aria-label="书籍列表">
-        {filteredBooks.map((book) => (
-          <article className="book-row book-row-v2" key={book.id}>
-            <button className="book-cover-button" type="button" onClick={() => { setRoomBook(book); setScreen('room') }} aria-label={`查看《${book.title}》的书籍档案`}><BookCover book={book} /><small>查看书籍档案</small></button>
-            <button className="book-main book-main-button" type="button" onClick={() => { setRoomBook(book); if (book.id === 'rain-room') openReaderAtChapter(0); else showToast('这本书还没有拆封。') }} aria-label={`${book.progress ? '继续阅读' : '打开'}《${book.title}》`}>
-              <span className="book-state">{book.statusLabel} {book.progress > 0 && `· ${book.progress}%`}</span><strong>{book.title}</strong><em>{book.englishTitle}</em><span className="book-author">{book.author}</span><span className="book-description">{book.description}</span><span className="open-book">{book.progress ? '继续阅读' : '翻开看看'} <ChevronRight /></span>
+      {shelfView === 'list' ? (
+        <section className="book-list" aria-label="书籍列表">
+          {filteredBooks.map((book) => (
+            <article className="book-row book-row-v2" key={book.id}>
+              <button className="book-cover-button" type="button" onClick={() => { setRoomBook(book); setScreen('room') }} aria-label={`查看《${book.title}》的书籍档案`}><BookCover book={book} /><small>查看书籍档案</small></button>
+              <button className="book-main book-main-button" type="button" onClick={() => { setRoomBook(book); if (book.id === 'rain-room') openReaderAtChapter(0); else showToast('这本书还没有拆封。') }} aria-label={`${book.progress ? '继续阅读' : '打开'}《${book.title}》`}>
+                <span className="book-state">{book.statusLabel} {book.progress > 0 && `· ${book.progress}%`}</span><strong>{book.title}</strong><em>{book.englishTitle}</em><span className="book-author">{book.author}</span><span className="book-description">{book.description}</span><span className="open-book">{book.progress ? '继续阅读' : '翻开看看'} <ChevronRight /></span>
+              </button>
+              <button className="book-trace book-trace-button" type="button" onClick={() => { setRoomBook(book); if (book.id === 'rain-room') openReaderAtChapter(0); else showToast('这里还没有阅读痕迹。') }} aria-label={`查看《${book.title}》最近停留的位置`}>
+                <BookOpenText /><small>{book.lastChapter ? `最近停留 · ${book.lastChapter}` : '尚未开始阅读'}</small>
+                <q>{book.lastChapter ? book.quote : '这本书还在等待第一次翻开。'}</q>
+                <span>{book.lastChapter ? '回到这句话' : '翻开看看'} <ChevronRight /></span>
+              </button>
+            </article>
+          ))}
+        </section>
+      ) : (
+        <section className="book-grid" aria-label="封面书架">
+          {filteredBooks.map((book) => (
+            <button className="grid-cover-button" type="button" key={book.id} onClick={() => { setRoomBook(book); setScreen('room') }} aria-label={`查看《${book.title}》的书籍档案`}>
+              <BookCover book={book} />
             </button>
-            <button className="book-trace book-trace-button" type="button" onClick={() => { setRoomBook(book); if (book.id === 'rain-room') openReaderAtChapter(0); else showToast('这里还没有阅读痕迹。') }} aria-label={`查看《${book.title}》最近停留的位置`}>
-              <BookOpenText /><small>{book.lastChapter ? `最近停留 · ${book.lastChapter}` : '尚未开始阅读'}</small>
-              <q>{book.lastChapter ? book.quote : '这本书还在等待第一次翻开。'}</q>
-              <span>{book.lastChapter ? '回到这句话' : '翻开看看'} <ChevronRight /></span>
-            </button>
-          </article>
-        ))}
-      </section>
+          ))}
+        </section>
+      )}
       <footer className="shelf-footer"><span>Marginalia · 私人共读书房</span><span>昨夜的灯尚未亮起</span></footer>
       {toast && <div className="toast" role="status">{toast}</div>}
     </main>
