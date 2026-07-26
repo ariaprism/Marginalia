@@ -1,5 +1,27 @@
 # Marginalia 技术与产品决定
 
+## 2026-07-26：Phase 1B 进入真实 EPUB 与本地持久化
+
+### 背景
+
+Phase 1A 视觉原型已收口。下一目标是从静态视觉稿过渡到可导入、可保存、可重读的真实书籍。需要先确定数据模型与本地存储边界，再修改 UI。
+
+### 决定
+
+- 在 `src/domain/` 定义不依赖 React、浏览器或 Supabase 的核心对象：`Book`、`Chapter`、`Locator`、`ReadingProgress`、`Highlight`、`Annotation`、`Marginalia`。
+- 定位使用 `chapterIndex` + `elementPath` + `textOffset` + `selectedText` + 上下文，CFI 仅作辅助；动态页码只用于显示。
+- 浏览器内使用 JSZip 解析用户上传的 EPUB，先提取元数据、目录与章节 HTML。
+- 使用 IndexedDB 持久化：books、epubFiles、chapters、readingProgress、highlights、annotations、marginalia。
+- 先完成存储层与解析器，再逐步接入现有书架和阅读器 UI，替换硬编码的模拟书籍。
+
+### 影响
+
+- `src/App.tsx` 中的硬编码书籍与章节数据最终会被本地数据取代，但视觉结构保持不变。
+- 阅读器需要先清洗 EPUB 章节 HTML，再渲染句子单元；原有 sentence segmenter 逻辑需要适配 HTML 输入。
+- 测试使用 `fake-indexeddb` 模拟 IndexedDB，避免测试依赖真实浏览器环境。
+
+---
+
 ## 2026-07-19：第一版阅读器改为分页优先
 
 ### 背景

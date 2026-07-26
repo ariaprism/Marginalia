@@ -8,9 +8,9 @@
 
 ## 当前阶段
 
-- Phase：Phase 0 — Blueprint / 定下地基（Phase 1A 视觉原型检查点已完成）
+- Phase：Phase 1B — Living Book / 真实 EPUB（Phase 0 地基与 Phase 1A 视觉原型已完成）
 - 状态：进行中
-- 当前目标：回到剩余领域地基，定义真实 EPUB 接入前的核心对象与定位语义。
+- 当前目标：把 EPUB 解析与 IndexedDB 持久化接入现有 UI，让书架与阅读器从本地存储读取真实书籍。
 
 ## 已完成
 
@@ -36,29 +36,36 @@
 - [x] 将正文划线详情整理为带时间戳与三点菜单的轻量痕迹卡
 - [x] 支持同一句子连续留下、单独修订或抹去多条批注
 - [x] 收口 Phase 1A 视觉原型检查点：书架、书籍小房间、分页阅读、句子选择与多条痕迹交互
+- [x] 定义不依赖 React / 浏览器 / Supabase 的核心领域对象（Book、Chapter、Locator、ReadingProgress、Highlight、Annotation、Marginalia）
+- [x] 撰写 `docs/EPUB_ANCHORING.md`，明确 CFI、章节结构、原文上下文与重锚定策略
+- [x] 为核心领域对象与定位规则补充单元测试
+- [x] 生成来源合法的测试 EPUB《雨夜书房》
+- [x] 实现基于 JSZip 的真实 EPUB 解析器（元数据、目录、章节）
+- [x] 接入 IndexedDB：持久化书籍、EPUB 原文件、章节、阅读位置、划线、批注与她留下的文字
 
 ## 正在进行
 
-- [ ] 定义核心领域对象与真实 EPUB 的稳定定位语义
+- [ ] 将 EPUB 解析与 IndexedDB 接入现有 UI
 
 ## 下次开工：直接从这里继续
 
 当小狐狸说“小G，我们接下来干嘛”时，无需重新盘视觉稿，直接回答并推进下面的顺序：
 
-1. 定义不依赖 React、浏览器或 Supabase 的核心领域对象：`Book`、`Chapter`、`Locator`、`ReadingProgress`、`Highlight`、`Annotation`。
-2. 明确真实 EPUB 的稳定定位与重锚定策略，并写入 `docs/EPUB_ANCHORING.md`：以 spine/章节结构位置或 EPUB CFI 为主，同时保存原文、前后文和章节信息；动态页码只用于显示，不能作为持久定位。
-3. 为领域对象和定位规则补测试，确认划线、批注、多个批注与最近停留都能使用同一套稳定位置。
-4. 准备一册来源合法、结构清楚的测试 EPUB，再开始真实 EPUB 的解析与导入验证。
-5. 真实书跑通后接入 IndexedDB，使书籍、阅读进度、划线和批注刷新后仍然存在。
+1. 将 `src/domain/` 定义接入现有书架与阅读器，替换硬编码的模拟书籍数据。
+2. 实现 EPUB 上传入口：用户选择 `.epub` 文件后，调用 `parseEpub` 解析，并把书籍元数据、章节、原文件存入 IndexedDB。
+3. 书架从 IndexedDB 读取书籍列表；点击真实书籍进入书籍小房间与阅读器。
+4. 阅读器从 IndexedDB 读取章节 HTML 并渲染正文；保留现有的分页、句子选择、划线与批注交互。
+5. 将当前的划线与批注状态从 `useState` 迁移到 IndexedDB，刷新后仍然存在。
+6. 保存和恢复阅读位置，使用 `ReadingProgress` + `Locator`。
 
-小狐狸不需要提前准备代码；小G先完成第 1、2 项的技术草案，只在会改变产品语义时请小狐狸选择。
+小狐狸不需要提前准备代码；遇到会改变产品语义的选择（例如上传入口的文案、解析失败的处理方式）再请小狐狸决定。
 
 ## 后续待办
 
 - [x] 建立 `docs/DECISIONS.md`
+- [x] 补充核心领域对象与 EPUB 定位文档
 - [ ] 补充其余 `docs/` 与最小代码规范
-- [ ] 定义核心领域对象
-- [ ] 准备合法的测试 EPUB
+- [ ] 将真实 EPUB 接入 UI
 - [ ] 明确第一版的非目标边界
 
 ## 当前阻塞
@@ -67,9 +74,9 @@
 
 ## 已验证
 
-- 2026-07-22：`npm test`（6 项通过）
-- 2026-07-22：`npm run lint`
-- 2026-07-22：`npm run build`
+- 2026-07-26：`npm test`（20 项通过）
+- 2026-07-26：`npm run lint`
+- 2026-07-26：`npm run build`
 
 ## 近期决定
 
@@ -87,6 +94,9 @@
 - 2026-07-21：点击主页品牌区可在信息列表与三列封面书架之间切换。
 - 2026-07-21：Phase 1A 视觉原型形成阶段检查点，下一步回到 Phase 0 剩余领域地基。
 - 2026-07-22：下一施工顺序固定为“核心领域对象 → EPUB 稳定定位 → 合法测试 EPUB → 真实导入 → IndexedDB 持久化”。
+- 2026-07-26：核心领域对象定义在 `src/domain/`，不依赖 React、浏览器或 Supabase。
+- 2026-07-26：EPUB 解析使用 JSZip 在浏览器本地完成，不依赖后端。
+- 2026-07-26：本地数据使用 IndexedDB 持久化，schema 包含 books、epubFiles、chapters、readingProgress、highlights、annotations、marginalia。
 
 ## GitHub 操作说明
 
