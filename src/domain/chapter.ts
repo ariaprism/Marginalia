@@ -1,6 +1,6 @@
 /**
  * 一个章节在 EPUB spine 中的位置。
- * 实际正文内容不保存在这里，而是由阅读器按需解析。
+ * 本地存储可选择同时保存原始 XHTML，供阅读器直接渲染。
  */
 export type Chapter = {
   id: string
@@ -9,6 +9,8 @@ export type Chapter = {
   title: string
   /** EPUB 内 href，例如 "text/chapter1.xhtml"。 */
   href: string
+  /** 章节原始 XHTML，可选；不依赖网络时直接渲染。 */
+  html?: string
 }
 
 export type ChapterMap = {

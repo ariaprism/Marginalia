@@ -40,6 +40,34 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByLabelText(/第 1 页，共/)).toBeInTheDocument()
   })
 
+  it('keeps the sample book traces out of an imported book', async () => {
+    const bytes = await buildRainRoomEpub()
+    const file = new File([bytes.buffer as ArrayBuffer], '导入的书.epub', { type: 'application/epub+zip' })
+
+    render(<App />)
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    fireEvent.change(input)
+    await waitFor(() => expect(screen.getByText('已经藏入书架。')).toBeInTheDocument())
+
+    // 进入导入书的书房：示例书排在前面，导入的那本在后面。
+    const importedCover = (await screen.findAllByRole('button', { name: /查看《雨夜书房》的书籍档案/ }))[1]
+    fireEvent.click(importedCover)
+
+    await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: '章节与痕迹' })).toBeInTheDocument())
+    expect(screen.queryByText('句子需要重量。')).not.toBeInTheDocument()
+    expect(screen.queryByText(/有些话打在屏幕上很轻/)).not.toBeInTheDocument()
+    expect(screen.getAllByText('尚无痕迹').length).toBeGreaterThan(0)
+
+    // 页边痕迹面板同样为空，统计里的条数为 0。
+    fireEvent.click(screen.getByRole('button', { name: /从头开始读|从这里继续/ }))
+    expect(await screen.findByRole('heading', { name: '雨先抵达' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('article'))
+    fireEvent.click(screen.getByRole('button', { name: '页边痕迹' }))
+    expect(screen.getByText('这本书还没有留下痕迹。')).toBeInTheDocument()
+  })
+
   it('filters the mobile-friendly shelf', () => {
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: /已读完/ }))

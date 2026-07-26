@@ -58,6 +58,7 @@ export async function importEpubFile(file: File): Promise<ImportResult> {
         index: chapter.index,
         title: chapter.title,
         href: chapter.href,
+        html: chapter.html,
       })),
     )
   } catch (error) {

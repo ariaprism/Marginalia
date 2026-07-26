@@ -50,6 +50,8 @@ type Book = {
 
 type Trace = {
   id: string
+  /** 痕迹归属的书，避免不同书之间互相串数据。 */
+  bookId: string
   chapterIndex: number
   sentenceStart?: number
   sentenceEnd?: number
@@ -120,9 +122,11 @@ const books: Book[] = [
   },
 ]
 
+/** 示例书《雨夜书房》预置的痕迹，仅属于 rain-room 这一本。 */
 const initialTraces: Trace[] = [
   {
     id: 'trace-1',
+    bookId: 'rain-room',
     chapterIndex: 0,
     chapter: '第一章 · 雨先抵达',
     quote: '句子需要重量。',
@@ -131,6 +135,7 @@ const initialTraces: Trace[] = [
   },
   {
     id: 'trace-2',
+    bookId: 'rain-room',
     chapterIndex: 1,
     chapter: '第二章 · 没有寄出的页码',
     quote: '我以为有人提前知道了我的心事。',
@@ -141,6 +146,7 @@ const initialTraces: Trace[] = [
   },
   {
     id: 'trace-3',
+    bookId: 'rain-room',
     chapterIndex: 3,
     chapter: '第四章 · 替沉默装订',
     quote: '空白并不比文字轻。',
@@ -196,7 +202,29 @@ function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
   )
 }
 
-function BrandHeader({ onBack, shelfView, onToggleView, onImportClick }: { onBack?: () => void; shelfView?: ShelfView; onToggleView?: () => void; onImportClick?: () => void }) {
+/**
+ * 藏书入口。
+ *
+ * 用 <label> 直接包住 <input type="file">，而不是拿按钮去 input.click()：
+ * iOS Safari 只信任落在 input 自身上的用户手势，JS 转发的点击会被静默忽略，
+ * 表现就是手机上点「藏入一本书」毫无反应。
+ */
+function ImportBookControl({ onFileChange }: { onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void }) {
+  return (
+    <label className="import-book">
+      <Upload size={18} strokeWidth={1.5} aria-hidden="true" />
+      <span>藏入一本书</span>
+      <input
+        type="file"
+        accept=".epub,application/epub+zip"
+        className="import-book-input"
+        onChange={onFileChange}
+      />
+    </label>
+  )
+}
+
+function BrandHeader({ onBack, shelfView, onToggleView, onFileChange }: { onBack?: () => void; shelfView?: ShelfView; onToggleView?: () => void; onFileChange?: (event: React.ChangeEvent<HTMLInputElement>) => void }) {
   if (onBack) {
     return (
       <header className="shelf-header room-header">
@@ -223,7 +251,7 @@ function BrandHeader({ onBack, shelfView, onToggleView, onImportClick }: { onBac
         </span>
         <div><p className="brand-name">Marginalia</p><p className="brand-subtitle">在正文之外，我们相遇。</p></div>
       </button>
-      <button className="import-book" type="button" aria-label="藏入一本书" onClick={onImportClick}><Upload size={18} strokeWidth={1.5} /><span>藏入一本书</span></button>
+      {onFileChange && <ImportBookControl onFileChange={onFileChange} />}
     </header>
   )
 }
@@ -264,7 +292,6 @@ function App() {
   const viewportRef = useRef<HTMLDivElement>(null)
   const flowRef = useRef<HTMLDivElement>(null)
   const reflowAnchorRef = useRef<ReflowAnchor | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const booksState = useBooks(importKey)
 
@@ -310,6 +337,17 @@ function App() {
     [filter, shelfBooks],
   )
 
+  /**
+   * 只属于当前这本书的痕迹。
+   *
+   * 所有展示与统计都必须走这个列表，直接用 traces 会把示例书的划线
+   * 漏到别的书里（书房页、页边痕迹、统计都出现过这个串数据的问题）。
+   */
+  const bookTraces = useMemo(
+    () => traces.filter((trace) => trace.bookId === roomBook.id),
+    [roomBook.id, traces],
+  )
+
   const currentChapterIndex = useMemo(() => {
     let active = 0
     chapterStarts.forEach((start, index) => { if (start <= pageIndex) active = index })
@@ -318,14 +356,14 @@ function App() {
 
   const selectedRangeTrace = useMemo(() => {
     if (!sentenceSelection) return undefined
-    return traces.find((trace) => trace.chapterIndex === sentenceSelection.chapterIndex
+    return bookTraces.find((trace) => trace.chapterIndex === sentenceSelection.chapterIndex
       && trace.sentenceStart === sentenceSelection.start
       && trace.sentenceEnd === sentenceSelection.end)
-  }, [sentenceSelection, traces])
+  }, [bookTraces, sentenceSelection])
   const selectedRangeIsHighlighted = Boolean(selectedRangeTrace && selectedRangeTrace.highlighted !== false)
   const activeNoteTrace = useMemo(
-    () => traces.find((trace) => trace.id === noteTargetTraceId),
-    [noteTargetTraceId, traces],
+    () => bookTraces.find((trace) => trace.id === noteTargetTraceId),
+    [bookTraces, noteTargetTraceId],
   )
   const noteQuoteLineClass = (activeNoteTrace ?? selectedRangeTrace)?.highlighted
     ? 'trace-line-highlight'
@@ -340,10 +378,6 @@ function App() {
   }
 
   const clearToast = () => setToast(null)
-
-  const handleImportClick = () => {
-    fileInputRef.current?.click()
-  }
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -563,7 +597,8 @@ function App() {
     if (!selectedText || !sentenceSelection) return
     const chapterIndex = sentenceSelection?.chapterIndex ?? currentChapterIndex
     setTraces((current) => {
-      const existingIndex = current.findIndex((trace) => trace.chapterIndex === chapterIndex
+      const existingIndex = current.findIndex((trace) => trace.bookId === roomBook.id
+        && trace.chapterIndex === chapterIndex
         && trace.sentenceStart === sentenceSelection.start
         && trace.sentenceEnd === sentenceSelection.end)
       if (existingIndex >= 0) {
@@ -573,6 +608,7 @@ function App() {
       }
       return [...current, {
         id: `trace-${Date.now()}`,
+        bookId: roomBook.id,
         chapterIndex,
         sentenceStart: sentenceSelection.start,
         sentenceEnd: sentenceSelection.end,
@@ -588,7 +624,8 @@ function App() {
   const cancelHighlight = () => {
     if (!sentenceSelection) return
     setTraces((current) => current.flatMap((trace) => {
-      const isCurrentRange = trace.chapterIndex === sentenceSelection.chapterIndex
+      const isCurrentRange = trace.bookId === roomBook.id
+        && trace.chapterIndex === sentenceSelection.chapterIndex
         && trace.sentenceStart === sentenceSelection.start
         && trace.sentenceEnd === sentenceSelection.end
       if (!isCurrentRange) return [trace]
@@ -637,7 +674,8 @@ function App() {
           }
         })
       }
-      const existingIndex = sentenceSelection ? current.findIndex((trace) => trace.chapterIndex === chapterIndex
+      const existingIndex = sentenceSelection ? current.findIndex((trace) => trace.bookId === roomBook.id
+        && trace.chapterIndex === chapterIndex
         && trace.sentenceStart === sentenceSelection.start
         && trace.sentenceEnd === sentenceSelection.end) : -1
       if (existingIndex >= 0) {
@@ -647,6 +685,7 @@ function App() {
       }
       return [...current, {
         id: targetId,
+        bookId: roomBook.id,
         chapterIndex,
         sentenceStart: sentenceSelection?.start,
         sentenceEnd: sentenceSelection?.end,
@@ -716,9 +755,10 @@ function App() {
   }
 
   const openExistingTrace = (chapterIndex: number, quote: string) => {
-    const trace = traces.find((item) => item.chapterIndex === chapterIndex)
+    const trace = bookTraces.find((item) => item.chapterIndex === chapterIndex)
     setActiveTrace(trace ?? {
       id: `preview-${chapterIndex}`,
+      bookId: roomBook.id,
       chapterIndex,
       chapter: `${readerChapters[chapterIndex].chapter} · ${readerChapters[chapterIndex].title}`,
       quote,
@@ -732,7 +772,7 @@ function App() {
     const hasChapters = readerChaptersReady && readerChapters.length > 0
     return (
       <main className="room-shell">
-        <BrandHeader onBack={() => setScreen('shelf')} onImportClick={handleImportClick} />
+        <BrandHeader onBack={() => setScreen('shelf')} />
         <section className="room-hero">
           <BookCover book={roomBook} large />
           <div className="room-book-info">
@@ -755,7 +795,7 @@ function App() {
           <section className="room-chapters">
             <div className="room-section-title"><ChapterTraceMark /><h2>章节与痕迹</h2></div>
             {readerChapters.map((chapter, index) => {
-              const chapterTraces = traces.filter((trace) => trace.chapterIndex === index)
+              const chapterTraces = bookTraces.filter((trace) => trace.chapterIndex === index)
               return (
                 <div className="room-chapter-group" key={chapter.title}>
                   <button className="room-chapter-heading" type="button" onClick={() => openReaderAtChapter(index)}>
@@ -786,7 +826,6 @@ function App() {
             </section>
           </div>
         )}
-        <input ref={fileInputRef} type="file" accept=".epub" className="visually-hidden" onChange={handleFileChange} aria-hidden="true" tabIndex={-1} />
         <Toast toast={toast} onClose={clearToast} />
       </main>
     )
@@ -834,13 +873,13 @@ function App() {
                         const isSelected = sentenceSelection?.chapterIndex === chapterIndex
                           && sentence.index >= sentenceSelection.start
                           && sentence.index <= sentenceSelection.end
-                        const hasUserHighlight = traces.some((trace) => trace.chapterIndex === chapterIndex
+                        const hasUserHighlight = bookTraces.some((trace) => trace.chapterIndex === chapterIndex
                           && trace.sentenceStart !== undefined
                           && trace.sentenceEnd !== undefined
                           && trace.highlighted === true
                           && sentence.index >= trace.sentenceStart
                           && sentence.index <= trace.sentenceEnd)
-                        const hasAnnotation = !hasUserHighlight && traces.some((trace) => trace.chapterIndex === chapterIndex
+                        const hasAnnotation = !hasUserHighlight && bookTraces.some((trace) => trace.chapterIndex === chapterIndex
                           && trace.sentenceStart !== undefined
                           && trace.sentenceEnd !== undefined
                           && Boolean(trace.foxNotes?.length)
@@ -931,8 +970,8 @@ function App() {
           <section className="reader-panel">
             <div className="panel-handle" />
             {panel === 'toc' && <><PanelHeading eyebrow="CONTENTS" title="目录" close={() => setPanel(null)} /><div className="toc-list">{readerChapters.map((chapter, index) => <button className={index === currentChapterIndex ? 'is-current' : ''} type="button" key={chapter.title} onClick={() => jumpToChapter(index)}><span>{chapter.chapter}</span><strong>{chapter.title}</strong><small>{String((chapterStarts[index] ?? 0) + 1).padStart(2, '0')}</small></button>)}</div></>}
-            {panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={() => setPanel(null)} /><div className="trace-list">{[...traces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => jumpToChapter(trace.chapterIndex)}><small>{trace.chapter}</small><blockquote>“<span className={traceLineClass(trace)}>{trace.quote}</span>”</blockquote>{trace.foxNotes?.map((note) => <p key={note.id}><b>小狐狸</b>：{note.text}</p>)}{trace.fish && <p className="fish-note"><b>小鱼</b>：{trace.fish}</p>}</button>)}</div></>}
-            {panel === 'stats' && <><PanelHeading eyebrow="READING LIFE" title="阅读统计" close={() => setPanel(null)} /><div className="stats-grid stats-grid-v2"><div><strong>38<sup>%</sup></strong><small>约一小时后读完</small></div><div><strong>4 小时 12 分</strong><small>累计阅读</small></div><div><strong>{traces.length} 条</strong><small>笔记与划线</small></div></div></>}
+            {panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={() => setPanel(null)} /><div className="trace-list">{bookTraces.length === 0 ? <p className="panel-empty">这本书还没有留下痕迹。</p> : [...bookTraces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => jumpToChapter(trace.chapterIndex)}><small>{trace.chapter}</small><blockquote>“<span className={traceLineClass(trace)}>{trace.quote}</span>”</blockquote>{trace.foxNotes?.map((note) => <p key={note.id}><b>小狐狸</b>：{note.text}</p>)}{trace.fish && <p className="fish-note"><b>小鱼</b>：{trace.fish}</p>}</button>)}</div></>}
+            {panel === 'stats' && <><PanelHeading eyebrow="READING LIFE" title="阅读统计" close={() => setPanel(null)} /><div className="stats-grid stats-grid-v2"><div><strong>{Math.round(((pageIndex + 1) / totalPages) * 100)}<sup>%</sup></strong><small>当前进度</small></div><div><strong>{currentChapterIndex + 1} / {readerChapters.length} 章</strong><small>读到第几章</small></div><div><strong>{bookTraces.length} 条</strong><small>笔记与划线</small></div></div></>}
             {panel === 'type' && <><PanelHeading eyebrow="TYPESETTING" title="排版" close={() => setPanel(null)} /><div className="type-settings">
               <label><span>字号 <small>{fontSize}px</small></span><input type="range" min="16" max="25" value={fontSize} onChange={(event) => { rememberReflowAnchor(); setFontSize(Number(event.target.value)) }} /></label>
               <label><span>行距 <small>{lineHeight.toFixed(1)}</small></span><input type="range" min="1.5" max="2.3" step="0.1" value={lineHeight} onChange={(event) => { rememberReflowAnchor(); setLineHeight(Number(event.target.value)) }} /></label>
@@ -949,7 +988,6 @@ function App() {
           <button aria-label={theme === 'day' ? '切换至夜间模式' : '切换至日间模式'} title={theme === 'day' ? '夜间模式' : '日间模式'} type="button" onClick={() => setTheme(theme === 'day' ? 'night' : 'day')}><SunMoon /></button>
           <button aria-label="排版设置" title="排版设置" className={panel === 'type' ? 'is-active' : ''} type="button" onClick={() => setPanel(panel === 'type' ? null : 'type')}><Type /></button>
         </nav>
-        <input ref={fileInputRef} type="file" accept=".epub" className="visually-hidden" onChange={handleFileChange} aria-hidden="true" tabIndex={-1} />
         <Toast toast={toast} onClose={clearToast} />
       </main>
     )
@@ -957,7 +995,7 @@ function App() {
 
   return (
     <main className="shelf-shell shelf-shell-v2">
-      <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} onImportClick={handleImportClick} />
+      <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} onFileChange={handleFileChange} />
       <nav className="shelf-filters" aria-label="书架分类">
         {filters.map((item) => {
           const count = item.id === 'all' ? shelfBooks.length : shelfBooks.filter((book) => book.status === item.id).length
@@ -990,7 +1028,6 @@ function App() {
         </section>
       )}
       <footer className="shelf-footer"><span>Marginalia · 私人共读书房</span><span>昨夜的灯尚未亮起</span></footer>
-      <input ref={fileInputRef} type="file" accept=".epub" className="visually-hidden" onChange={handleFileChange} aria-hidden="true" tabIndex={-1} />
       <Toast toast={toast} onClose={clearToast} />
     </main>
   )
