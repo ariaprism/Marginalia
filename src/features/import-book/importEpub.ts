@@ -1,6 +1,7 @@
 import { createBook } from '../../domain/book'
 import { parseEpub } from '../../reader/epubParser'
 import { saveBook, saveChapters, saveEpubFile } from '../../data/local/bookStore'
+import { newId } from '../../shared/id'
 
 export type ImportResult =
   | { ok: true; bookId: string }
@@ -37,7 +38,7 @@ export async function importEpubFile(file: File): Promise<ImportResult> {
     }
   }
 
-  const bookId = crypto.randomUUID()
+  const bookId = newId()
   const book = createBook({
     id: bookId,
     title: parsed.metadata.title || file.name.replace(/\.epub$/i, ''),

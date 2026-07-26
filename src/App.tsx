@@ -384,12 +384,18 @@ function App() {
     event.target.value = ''
     if (!file) return
 
-    const result = await importEpubFile(file)
-    if (result.ok) {
-      setImportKey((key) => key + 1)
-      showToast('已经藏入书架。')
-    } else {
-      showToast(result.message, result.details)
+    // 兜底 catch 不能省：importEpubFile 里任何未预料的异常如果冒出去，
+    // 表现是「选完文件回到书架、既没提示也没有书」，在手机上完全无从排查。
+    try {
+      const result = await importEpubFile(file)
+      if (result.ok) {
+        setImportKey((key) => key + 1)
+        showToast('已经藏入书架。')
+      } else {
+        showToast(result.message, result.details)
+      }
+    } catch (error) {
+      showToast('这本书暂时无法打开', error instanceof Error ? error.message : String(error))
     }
   }
 
