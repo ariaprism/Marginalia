@@ -45,7 +45,7 @@
 
 ## 正在进行
 
-- [ ] 将 EPUB 解析与 IndexedDB 接入现有 UI
+- [ ] 将 EPUB 解析与 IndexedDB 接入现有 UI（已接入上传、书架列表；阅读器渲染真实章节待完成）
 
 ## 下次开工：直接从这里继续
 
@@ -97,6 +97,7 @@
 - 2026-07-26：核心领域对象定义在 `src/domain/`，不依赖 React、浏览器或 Supabase。
 - 2026-07-26：EPUB 解析使用 JSZip 在浏览器本地完成，不依赖后端。
 - 2026-07-26：本地数据使用 IndexedDB 持久化，schema 包含 books、epubFiles、chapters、readingProgress、highlights、annotations、marginalia。
+- 2026-07-26：EPUB 解析失败时提示“这本书暂时无法打开”，右侧提供小箭头展开查看具体报错；点击空白处消失。
 
 ## GitHub 操作说明
 

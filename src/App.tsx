@@ -21,6 +21,8 @@ import {
   useRef,
   useState,
 } from 'react'
+import { useBooks } from './features/bookshelf/useBooks'
+import { importEpubFile } from './features/import-book/importEpub'
 import './App.css'
 
 type ShelfFilter = 'all' | 'reading' | 'wish' | 'finished'
@@ -256,7 +258,7 @@ function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
   )
 }
 
-function BrandHeader({ onBack, shelfView, onToggleView }: { onBack?: () => void; shelfView?: ShelfView; onToggleView?: () => void }) {
+function BrandHeader({ onBack, shelfView, onToggleView, onImportClick }: { onBack?: () => void; shelfView?: ShelfView; onToggleView?: () => void; onImportClick?: () => void }) {
   if (onBack) {
     return (
       <header className="shelf-header room-header">
@@ -283,7 +285,7 @@ function BrandHeader({ onBack, shelfView, onToggleView }: { onBack?: () => void;
         </span>
         <div><p className="brand-name">Marginalia</p><p className="brand-subtitle">在正文之外，我们相遇。</p></div>
       </button>
-      <button className="import-book" type="button" aria-label="藏入一本书"><Upload size={18} strokeWidth={1.5} /><span>藏入一本书</span></button>
+      <button className="import-book" type="button" aria-label="藏入一本书" onClick={onImportClick}><Upload size={18} strokeWidth={1.5} /><span>藏入一本书</span></button>
     </header>
   )
 }
@@ -316,15 +318,37 @@ function App() {
   const [returnPage, setReturnPage] = useState<number | null>(null)
   const [pendingChapter, setPendingChapter] = useState<number | null>(null)
   const [descriptionOpen, setDescriptionOpen] = useState(false)
-  const [toast, setToast] = useState('')
+  const [toast, setToast] = useState<{ message: string; details?: string } | null>(null)
+  const [importKey, setImportKey] = useState(0)
 
   const viewportRef = useRef<HTMLDivElement>(null)
   const flowRef = useRef<HTMLDivElement>(null)
   const reflowAnchorRef = useRef<ReflowAnchor | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const booksState = useBooks(importKey)
+
+  const loadedBooks: Book[] = useMemo(() => {
+    if (booksState.status !== 'ready') return []
+    return booksState.books.map((domainBook) => ({
+      id: domainBook.id,
+      title: domainBook.title,
+      englishTitle: '',
+      author: domainBook.author,
+      status: domainBook.status as BookStatus,
+      statusLabel: domainBook.status === 'reading' ? '在读' : domainBook.status === 'wish' ? '想读' : '已读完',
+      progress: domainBook.progress,
+      description: domainBook.description ?? '',
+      quote: '',
+      tone: 'rose' as const,
+    }))
+  }, [booksState])
+
+  const shelfBooks: Book[] = useMemo(() => [...books, ...loadedBooks], [loadedBooks])
 
   const filteredBooks = useMemo(
-    () => books.filter((book) => filter === 'all' || book.status === filter),
-    [filter],
+    () => shelfBooks.filter((book) => filter === 'all' || book.status === filter),
+    [filter, shelfBooks],
   )
 
   const currentChapterIndex = useMemo(() => {
@@ -349,9 +373,31 @@ function App() {
     : 'trace-line-annotation'
   const noteEntries = activeNoteTrace?.foxNotes ?? selectedRangeTrace?.foxNotes ?? []
 
-  const showToast = (message: string) => {
-    setToast(message)
-    window.setTimeout(() => setToast(''), 2200)
+  const showToast = (message: string, details?: string) => {
+    setToast({ message, details })
+    if (!details) {
+      window.setTimeout(() => setToast(null), 2200)
+    }
+  }
+
+  const clearToast = () => setToast(null)
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    const result = await importEpubFile(file)
+    if (result.ok) {
+      setImportKey((key) => key + 1)
+      showToast('已经藏入书架。')
+    } else {
+      showToast(result.message, result.details)
+    }
   }
 
   const toggleShelfView = () => {
@@ -697,7 +743,7 @@ function App() {
     const isSample = roomBook.id === 'rain-room'
     return (
       <main className="room-shell">
-        <BrandHeader onBack={() => setScreen('shelf')} />
+        <BrandHeader onBack={() => setScreen('shelf')} onImportClick={handleImportClick} />
         <section className="room-hero">
           <BookCover book={roomBook} large />
           <div className="room-book-info">
@@ -751,7 +797,8 @@ function App() {
             </section>
           </div>
         )}
-        {toast && <div className="toast" role="status">{toast}</div>}
+        <input ref={fileInputRef} type="file" accept=".epub" className="visually-hidden" onChange={handleFileChange} aria-hidden="true" tabIndex={-1} />
+        <Toast toast={toast} onClose={clearToast} />
       </main>
     )
   }
@@ -907,14 +954,15 @@ function App() {
           <button aria-label={theme === 'day' ? '切换至夜间模式' : '切换至日间模式'} title={theme === 'day' ? '夜间模式' : '日间模式'} type="button" onClick={() => setTheme(theme === 'day' ? 'night' : 'day')}><SunMoon /></button>
           <button aria-label="排版设置" title="排版设置" className={panel === 'type' ? 'is-active' : ''} type="button" onClick={() => setPanel(panel === 'type' ? null : 'type')}><Type /></button>
         </nav>
-        {toast && <div className="toast" role="status">{toast}</div>}
+        <input ref={fileInputRef} type="file" accept=".epub" className="visually-hidden" onChange={handleFileChange} aria-hidden="true" tabIndex={-1} />
+        <Toast toast={toast} onClose={clearToast} />
       </main>
     )
   }
 
   return (
     <main className="shelf-shell shelf-shell-v2">
-      <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} />
+      <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} onImportClick={handleImportClick} />
       <nav className="shelf-filters" aria-label="书架分类">
         {filters.map((item) => {
           const count = item.id === 'all' ? books.length : books.filter((book) => book.status === item.id).length
@@ -947,13 +995,39 @@ function App() {
         </section>
       )}
       <footer className="shelf-footer"><span>Marginalia · 私人共读书房</span><span>昨夜的灯尚未亮起</span></footer>
-      {toast && <div className="toast" role="status">{toast}</div>}
+      <input ref={fileInputRef} type="file" accept=".epub" className="visually-hidden" onChange={handleFileChange} aria-hidden="true" tabIndex={-1} />
+      <Toast toast={toast} onClose={clearToast} />
     </main>
   )
 }
 
 function PanelHeading({ eyebrow, title, close }: { eyebrow: string; title: string; close: () => void }) {
   return <div className="panel-heading"><div><small>{eyebrow}</small><h2>{title}</h2></div><button type="button" onClick={close} aria-label={`关闭${title}`}><X /></button></div>
+}
+
+function Toast({ toast, onClose }: { toast: { message: string; details?: string } | null; onClose: () => void }) {
+  const [expanded, setExpanded] = useState(false)
+  if (!toast) return null
+  return (
+    <>
+      {toast.details && <div className="toast-backdrop" onClick={onClose} aria-hidden="true" />}
+      <div className={`toast ${toast.details ? 'toast-pinned' : ''}`} role="status">
+        <span className="toast-message">{toast.message}</span>
+        {toast.details && (
+          <button
+            className="toast-expand"
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+            aria-label={expanded ? '收起详情' : '展开详情'}
+            aria-expanded={expanded}
+          >
+            <ChevronRight className={expanded ? 'is-expanded' : ''} />
+          </button>
+        )}
+        {expanded && <pre className="toast-details">{toast.details}</pre>}
+      </div>
+    </>
+  )
 }
 
 export default App

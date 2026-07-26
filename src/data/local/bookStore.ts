@@ -4,7 +4,7 @@ import type { Chapter } from '../../domain/chapter'
 import type { Highlight } from '../../domain/highlight'
 import type { Marginalia } from '../../domain/marginalia'
 import type { ReadingProgress } from '../../domain/readingProgress'
-import { getAllByIndex, withTransaction } from './db'
+import { getAllByIndex, openMarginaliaDB, withTransaction } from './db'
 
 export type StoredEpubFile = {
   bookId: string
@@ -44,7 +44,7 @@ export async function getEpubFile(bookId: string): Promise<Blob | undefined> {
 }
 
 export async function saveChapters(bookId: string, chapters: Chapter[]): Promise<void> {
-  const db = await import('./db').then((m) => m.openMarginaliaDB())
+  const db = await openMarginaliaDB()
   return new Promise((resolve, reject) => {
     const transaction = db.transaction('chapters', 'readwrite')
     const store = transaction.objectStore('chapters')
