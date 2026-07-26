@@ -6,6 +6,10 @@ export type RainRoomChapter = {
   title: string
   kicker: string
   paragraphs: string[]
+  /** 章节序号文案，省略时按顺序生成「第 N 章」。仅用于阅读器呈现，不写入 EPUB。 */
+  label?: string
+  /** 示例书里预先埋好的可点句子，仅用于阅读器呈现，不写入 EPUB。 */
+  highlight?: string
 }
 
 export const rainRoomChapters: RainRoomChapter[] = [
@@ -19,6 +23,7 @@ export const rainRoomChapters: RainRoomChapter[] = [
       '那时城里的人都已习惯把没有说完的话留在亮着的屏幕里。只有这间书房仍旧相信，句子需要重量：一张纸的重量，一滴墨水的重量，或者一个人把书合上以后，手掌在封面上多停留片刻的重量。',
       '守书人把最后一盏灯调暗。他知道今晚会有人来，因为靠窗第三排的书，刚刚无风地向外挪了一寸。',
     ],
+    highlight: '句子需要重量',
   },
   {
     id: 'chapter2',
@@ -31,6 +36,7 @@ export const rainRoomChapters: RainRoomChapter[] = [
       '守书人没有问作者，也没有问故事。他只是从柜台下面取出一只黄铜书签，放到她掌心：“那么，告诉我你忘不掉的那一句。”',
       '她想了很久。窗外的雨在这段沉默里换了一种下法。后来她说：“我只记得，读到它的时候，我以为有人提前知道了我的心事。”',
     ],
+    highlight: '有人提前知道了我的心事',
   },
   {
     id: 'chapter3',
@@ -42,6 +48,7 @@ export const rainRoomChapters: RainRoomChapter[] = [
       '女孩把黄铜书签贴上去，纸页便从中间打开。另一边是一间更小的房间，一张桌子，两把椅子，桌上摊着同一本书。',
       '其中一把椅子上有刚刚起身的温度。书的页边留着一行很淡的字：我没有在这里等你，我只是恰好比你早到了一会儿。',
     ],
+    highlight: '恰好比你早到了一会儿',
   },
   {
     id: 'chapter4',
@@ -53,17 +60,20 @@ export const rainRoomChapters: RainRoomChapter[] = [
       '有些人来到书里，是为了回答；有些人只是把同一句话读得更慢。书房从不把后一种来访算作缺席。',
       '守书人取来针线，把一小段沉默缝进书脊。线是雾粉色的，只有在灯光偏向黄昏的时候才看得见。',
     ],
+    highlight: '空白并不比文字轻',
   },
   {
     id: 'chapter5',
     index: 4,
     title: '天亮以后',
     kicker: 'After the lamps went out',
+    label: '尾声',
     paragraphs: [
       '雨在凌晨四点停下。女孩离开时没有带走那本书，只带走了夹在其中的一页。',
       '第二天早晨，城市的窗户一扇接一扇亮起来。没有人知道昨夜多出了一间书房，也没有人知道某本书的未来页上，已经提前留下了一行字。',
       '但当女孩再次翻到那里，她会看见纸页右下角有一点旧灯的颜色。那不是提醒，也不是等待回答的消息。那只是一个人曾在不同的时间，从这里经过。',
     ],
+    highlight: '一个人曾在不同的时间，从这里经过',
   },
 ]
 

@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import App from './App'
+import { buildRainRoomEpub } from './reader/fixtures/rain-room-epub'
 
 describe('Marginalia visual prototype', () => {
-  it('opens a book room from the cover and continues into the reader', () => {
+  it('opens a book room from the cover and continues into the reader', async () => {
     render(<App />)
 
     expect(screen.getByText('在正文之外，我们相遇。')).toBeInTheDocument()
@@ -12,8 +13,30 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByRole('dialog', { name: '雨夜书房' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '关闭完整简介' }))
 
-    fireEvent.click(screen.getByRole('button', { name: /从这里继续/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /从这里继续/ }))
     expect(screen.getByRole('heading', { name: '雨先抵达' })).toBeInTheDocument()
+    expect(screen.getByLabelText(/第 1 页，共/)).toBeInTheDocument()
+  })
+
+  it('imports a real EPUB and reads its chapters from storage', async () => {
+    const bytes = await buildRainRoomEpub()
+    const file = new File([bytes.buffer as ArrayBuffer], '雨夜书房.epub', { type: 'application/epub+zip' })
+
+    render(<App />)
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    fireEvent.change(input)
+
+    await waitFor(() => expect(screen.getByText('已经藏入书架。')).toBeInTheDocument())
+
+    // 导入后书架增加一条真书条目（进度0，aria-label 以「打开」开头）。
+    const importedRow = await screen.findByRole('button', { name: /^打开《雨夜书房》/ })
+    fireEvent.click(importedRow)
+
+    // 正文来自 IndexedDB 里解析出的 XHTML，而不是内置示例数据。
+    expect(await screen.findByRole('heading', { name: '雨先抵达' })).toBeInTheDocument()
+    expect(screen.getByText(/灯亮起来以前，书房先听见了雨。/)).toBeInTheDocument()
     expect(screen.getByLabelText(/第 1 页，共/)).toBeInTheDocument()
   })
 

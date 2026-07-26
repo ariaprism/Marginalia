@@ -23,6 +23,7 @@ import {
 } from 'react'
 import { useBooks } from './features/bookshelf/useBooks'
 import { importEpubFile } from './features/import-book/importEpub'
+import { loadBookChapters, sampleChapters, type ChapterText } from './reader/bookContent'
 import './App.css'
 
 type ShelfFilter = 'all' | 'reading' | 'wish' | 'finished'
@@ -119,77 +120,6 @@ const books: Book[] = [
   },
 ]
 
-const chapters = [
-  {
-    chapter: '第一章',
-    title: '雨先抵达',
-    kicker: 'The rain arrived first',
-    paragraphs: [
-      '灯亮起来以前，书房先听见了雨。它从屋檐最北边的一片瓦开始，沿着看不见的坡度慢慢走下来，敲过窗框，最后停在门前那块颜色较深的木头上。',
-      '那时城里的人都已习惯把没有说完的话留在亮着的屏幕里。只有这间书房仍旧相信，句子需要重量：一张纸的重量，一滴墨水的重量，或者一个人把书合上以后，手掌在封面上多停留片刻的重量。',
-      '守书人把最后一盏灯调暗。他知道今晚会有人来，因为靠窗第三排的书，刚刚无风地向外挪了一寸。',
-    ],
-    highlight: '句子需要重量',
-  },
-  {
-    chapter: '第二章',
-    title: '没有寄出的页码',
-    kicker: 'Pages without an address',
-    paragraphs: [
-      '女孩是在十一点四十分推门进来的。她的伞骨折了一根，雨水顺着袖口落下来，在地板上留下六枚深色的圆点。',
-      '“我想找一本书，”她说，“但我不知道书名。”',
-      '守书人没有问作者，也没有问故事。他只是从柜台下面取出一只黄铜书签，放到她掌心：“那么，告诉我你忘不掉的那一句。”',
-      '她想了很久。窗外的雨在这段沉默里换了一种下法。后来她说：“我只记得，读到它的时候，我以为有人提前知道了我的心事。”',
-    ],
-    highlight: '有人提前知道了我的心事',
-  },
-  {
-    chapter: '第三章',
-    title: '书页背面的房间',
-    kicker: 'The room behind the page',
-    paragraphs: [
-      '他们沿着书架向里走。每经过一排，外面的雨声就远一点，而纸张翻动的声音就近一点。书架尽头没有墙，只有一页竖立着的、微微发亮的纸。',
-      '女孩把黄铜书签贴上去，纸页便从中间打开。另一边是一间更小的房间，一张桌子，两把椅子，桌上摊着同一本书。',
-      '其中一把椅子上有刚刚起身的温度。书的页边留着一行很淡的字：我没有在这里等你，我只是恰好比你早到了一会儿。',
-    ],
-    highlight: '恰好比你早到了一会儿',
-  },
-  {
-    chapter: '第四章',
-    title: '替沉默装订',
-    kicker: 'Binding the silences',
-    paragraphs: [
-      '女孩没有立刻坐下。她先翻过那些写了字的页边，又翻过更多什么也没有留下的空白。奇怪的是，空白并不比文字轻。',
-      '有些人来到书里，是为了回答；有些人只是把同一句话读得更慢。书房从不把后一种来访算作缺席。',
-      '守书人取来针线，把一小段沉默缝进书脊。线是雾粉色的，只有在灯光偏向黄昏的时候才看得见。',
-    ],
-    highlight: '空白并不比文字轻',
-  },
-  {
-    chapter: '尾声',
-    title: '天亮以后',
-    kicker: 'After the lamps went out',
-    paragraphs: [
-      '雨在凌晨四点停下。女孩离开时没有带走那本书，只带走了夹在其中的一页。',
-      '第二天早晨，城市的窗户一扇接一扇亮起来。没有人知道昨夜多出了一间书房，也没有人知道某本书的未来页上，已经提前留下了一行字。',
-      '但当女孩再次翻到那里，她会看见纸页右下角有一点旧灯的颜色。那不是提醒，也不是等待回答的消息。那只是一个人曾在不同的时间，从这里经过。',
-    ],
-    highlight: '一个人曾在不同的时间，从这里经过',
-  },
-]
-
-const sentenceSegmenter = new Intl.Segmenter('zh-CN', { granularity: 'sentence' })
-const segmentedChapters = chapters.map((chapter) => {
-  let sentenceIndex = 0
-  const paragraphs = chapter.paragraphs.map((paragraph) => (
-    Array.from(sentenceSegmenter.segment(paragraph), ({ segment }) => ({
-      index: sentenceIndex++,
-      text: segment,
-    }))
-  ))
-  return { paragraphs, sentences: paragraphs.flat() }
-})
-
 const initialTraces: Trace[] = [
   {
     id: 'trace-1',
@@ -247,8 +177,16 @@ function ChapterTraceMark() {
   )
 }
 
+function catalogueIndexFor(book: Book) {
+  const sampleIndex = books.findIndex((item) => item.id === book.id)
+  if (sampleIndex >= 0) return sampleIndex + 1
+  let hash = 0
+  for (const char of book.id) hash = (hash * 31 + char.charCodeAt(0)) % 89
+  return books.length + 1 + hash
+}
+
 function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
-  const catalogueNumber = String(books.findIndex((item) => item.id === book.id) + 1).padStart(2, '0')
+  const catalogueNumber = String(catalogueIndexFor(book)).padStart(2, '0')
   return (
     <span className={`book-cover cover-${book.tone} ${large ? 'is-large' : ''}`} aria-hidden="true">
       <span className="cover-index">MARGINALIA · {catalogueNumber}</span>
@@ -295,9 +233,11 @@ function App() {
   const [shelfView, setShelfView] = useState<ShelfView>('list')
   const [roomBook, setRoomBook] = useState<Book>(books[0])
   const [filter, setFilter] = useState<ShelfFilter>('all')
+  const [readerChapters, setReaderChapters] = useState<ChapterText[]>(sampleChapters)
+  const [readerChaptersReady, setReaderChaptersReady] = useState(true)
   const [pageIndex, setPageIndex] = useState(0)
-  const [totalPages, setTotalPages] = useState(chapters.length)
-  const [chapterStarts, setChapterStarts] = useState(chapters.map((_, index) => index))
+  const [totalPages, setTotalPages] = useState(sampleChapters.length)
+  const [chapterStarts, setChapterStarts] = useState(sampleChapters.map((_, index) => index))
   const [chromeVisible, setChromeVisible] = useState(false)
   const [panel, setPanel] = useState<ReaderPanel>(null)
   const [theme, setTheme] = useState<ReaderTheme>('day')
@@ -328,6 +268,20 @@ function App() {
 
   const booksState = useBooks(importKey)
 
+  const segmentedChapters = useMemo(() => {
+    const segmenter = new Intl.Segmenter('zh-CN', { granularity: 'sentence' })
+    return readerChapters.map((chapter) => {
+      let sentenceIndex = 0
+      const paragraphs = chapter.paragraphs.map((paragraph) => (
+        Array.from(segmenter.segment(paragraph), ({ segment }) => ({
+          index: sentenceIndex++,
+          text: segment,
+        }))
+      ))
+      return { paragraphs, sentences: paragraphs.flat() }
+    })
+  }, [readerChapters])
+
   const loadedBooks: Book[] = useMemo(() => {
     if (booksState.status !== 'ready') return []
     return booksState.books.map((domainBook) => ({
@@ -345,6 +299,11 @@ function App() {
   }, [booksState])
 
   const shelfBooks: Book[] = useMemo(() => [...books, ...loadedBooks], [loadedBooks])
+
+  const openableBookIds = useMemo(
+    () => new Set(['rain-room', ...loadedBooks.map((book) => book.id)]),
+    [loadedBooks],
+  )
 
   const filteredBooks = useMemo(
     () => shelfBooks.filter((book) => filter === 'all' || book.status === filter),
@@ -535,15 +494,45 @@ function App() {
     else applySentenceSelection({ chapterIndex, start: sentenceIndex, end: sentenceIndex })
   }
 
-  const openReaderAtChapter = (chapterIndex: number) => {
-    if (roomBook.id !== 'rain-room') {
-      showToast('这本书还没有拆封，先读《雨夜书房》吧。')
-      return
-    }
-    setPendingChapter(chapterIndex)
+  const openReaderAtChapter = (chapterIndex: number, book: Book = roomBook) => {
+    setRoomBook(book)
+    setReaderChaptersReady(false)
     setScreen('reader')
     setChromeVisible(false)
     setPanel(null)
+    loadBookChapters(book.id)
+      .then((loadedChapters) => {
+        if (!loadedChapters.length) {
+          setScreen('shelf')
+          setReaderChaptersReady(true)
+          showToast('这本书暂时无法打开', '没有从这本书里解析出可阅读的章节。')
+          return
+        }
+        setReaderChapters(loadedChapters)
+        setPendingChapter(chapterIndex)
+        setPageIndex(0)
+        setReaderChaptersReady(true)
+      })
+      .catch((error) => {
+        setScreen('shelf')
+        setReaderChaptersReady(true)
+        showToast('这本书暂时无法打开', String(error))
+      })
+  }
+
+  const openRoom = (book: Book) => {
+    setRoomBook(book)
+    setScreen('room')
+    setReaderChaptersReady(false)
+    loadBookChapters(book.id)
+      .then((loadedChapters) => {
+        setReaderChapters(loadedChapters)
+        setReaderChaptersReady(true)
+      })
+      .catch(() => {
+        setReaderChapters([])
+        setReaderChaptersReady(true)
+      })
   }
 
   const turnToPage = (nextPage: number) => {
@@ -588,7 +577,7 @@ function App() {
         sentenceStart: sentenceSelection.start,
         sentenceEnd: sentenceSelection.end,
         highlighted: true,
-        chapter: `${chapters[chapterIndex].chapter} · ${chapters[chapterIndex].title}`,
+        chapter: `${readerChapters[chapterIndex].chapter} · ${readerChapters[chapterIndex].title}`,
         quote: selectedText,
       }]
     })
@@ -662,7 +651,7 @@ function App() {
         sentenceStart: sentenceSelection?.start,
         sentenceEnd: sentenceSelection?.end,
         highlighted: false,
-        chapter: `${chapters[chapterIndex].chapter} · ${chapters[chapterIndex].title}`,
+        chapter: `${readerChapters[chapterIndex].chapter} · ${readerChapters[chapterIndex].title}`,
         quote: selectedText,
         foxNotes: [nextNote],
       }]
@@ -731,7 +720,7 @@ function App() {
     setActiveTrace(trace ?? {
       id: `preview-${chapterIndex}`,
       chapterIndex,
-      chapter: `${chapters[chapterIndex].chapter} · ${chapters[chapterIndex].title}`,
+      chapter: `${readerChapters[chapterIndex].chapter} · ${readerChapters[chapterIndex].title}`,
       quote,
     })
     setNoteMenuTargetId(null)
@@ -740,7 +729,7 @@ function App() {
   }
 
   if (screen === 'room') {
-    const isSample = roomBook.id === 'rain-room'
+    const hasChapters = readerChaptersReady && readerChapters.length > 0
     return (
       <main className="room-shell">
         <BrandHeader onBack={() => setScreen('shelf')} onImportClick={handleImportClick} />
@@ -756,16 +745,16 @@ function App() {
           </div>
         </section>
         <section className="room-details">
-          <button className="room-recent" type="button" onClick={() => isSample && openReaderAtChapter(0)}>
+          <button className="room-recent" type="button" onClick={() => hasChapters && openReaderAtChapter(0)}>
             <BookOpenText /><small>{roomBook.lastChapter ? `最近停留 · ${roomBook.lastChapter} · ${roomBook.statusLabel} ${roomBook.progress}%` : '尚未开始阅读'}</small>
             <q>{roomBook.lastChapter ? roomBook.quote : '这本书还在等待第一次翻开。'}</q>
-            <span>{isSample ? '从这里继续' : '尚无阅读位置'} <ChevronRight /></span>
+            <span>{hasChapters ? (roomBook.lastChapter ? '从这里继续' : '从头开始读') : '尚无阅读位置'} <ChevronRight /></span>
           </button>
         </section>
-        {isSample && (
+        {hasChapters && (
           <section className="room-chapters">
             <div className="room-section-title"><ChapterTraceMark /><h2>章节与痕迹</h2></div>
-            {chapters.map((chapter, index) => {
+            {readerChapters.map((chapter, index) => {
               const chapterTraces = traces.filter((trace) => trace.chapterIndex === index)
               return (
                 <div className="room-chapter-group" key={chapter.title}>
@@ -804,12 +793,17 @@ function App() {
   }
 
   if (screen === 'reader') {
-    const currentChapter = chapters[currentChapterIndex]
+    const currentChapter = readerChapters[currentChapterIndex]
     return (
       <main className={`reader-shell reader-${theme}`}>
+        {!readerChaptersReady && (
+          <div className="reader-loading" aria-label="正在打开书籍" aria-live="polite">
+            <span>正在打开…</span>
+          </div>
+        )}
         <header className={`reader-topbar ${chromeVisible ? 'is-visible' : ''}`}>
           <button className="icon-button back-button" type="button" onClick={() => setScreen('shelf')} aria-label="返回书架"><ArrowLeft size={19} /><span>书架</span></button>
-          <div className="reader-location"><span>雨夜书房</span></div>
+          <div className="reader-location"><span>{roomBook.title}</span></div>
           <span className="reader-progress">{Math.round(((pageIndex + 1) / totalPages) * 100)}%</span>
         </header>
 
@@ -827,7 +821,7 @@ function App() {
           <div className="running-header">{currentChapter.chapter} · {currentChapter.title}</div>
           <div className="reader-text-viewport" ref={viewportRef}>
             <div className="reader-flow" ref={flowRef} style={{ transform: `translateX(-${pageIndex * 100}%)` }}>
-              {chapters.map((chapter, chapterIndex) => (
+              {readerChapters.map((chapter, chapterIndex) => (
                 <section className="chapter-section" data-chapter-index={chapterIndex} key={chapter.title}>
                   <div className="chapter-heading">
                     <span>{chapter.chapter}</span><h1>{chapter.title}</h1><p>{chapter.kicker}</p>
@@ -835,7 +829,8 @@ function App() {
                   {segmentedChapters[chapterIndex].paragraphs.map((paragraph, paragraphIndex) => (
                     <p key={chapter.paragraphs[paragraphIndex]} className={paragraphIndex === 0 ? 'opening-paragraph' : ''}>
                       {paragraph.map((sentence) => {
-                        const parts = sentence.text.split(chapter.highlight)
+                        const highlight = chapter.highlight ?? ''
+                        const parts = highlight ? sentence.text.split(highlight) : [sentence.text]
                         const isSelected = sentenceSelection?.chapterIndex === chapterIndex
                           && sentence.index >= sentenceSelection.start
                           && sentence.index <= sentenceSelection.end
@@ -858,7 +853,7 @@ function App() {
                             key={sentence.index}
                             onClick={(event) => handleSentenceClick(event, chapterIndex, sentence.index)}
                           >
-                            {parts.length === 1 ? sentence.text : <>{parts[0]}<mark onClick={(event) => { event.stopPropagation(); openExistingTrace(chapterIndex, chapter.highlight) }}>{chapter.highlight}</mark>{parts[1]}</>}
+                            {parts.length === 1 ? sentence.text : <>{parts[0]}<mark onClick={(event) => { event.stopPropagation(); openExistingTrace(chapterIndex, highlight) }}>{highlight}</mark>{parts[1]}</>}
                           </span>
                         )
                       })}
@@ -935,7 +930,7 @@ function App() {
         {panel && (
           <section className="reader-panel">
             <div className="panel-handle" />
-            {panel === 'toc' && <><PanelHeading eyebrow="CONTENTS" title="目录" close={() => setPanel(null)} /><div className="toc-list">{chapters.map((chapter, index) => <button className={index === currentChapterIndex ? 'is-current' : ''} type="button" key={chapter.title} onClick={() => jumpToChapter(index)}><span>{chapter.chapter}</span><strong>{chapter.title}</strong><small>{String((chapterStarts[index] ?? 0) + 1).padStart(2, '0')}</small></button>)}</div></>}
+            {panel === 'toc' && <><PanelHeading eyebrow="CONTENTS" title="目录" close={() => setPanel(null)} /><div className="toc-list">{readerChapters.map((chapter, index) => <button className={index === currentChapterIndex ? 'is-current' : ''} type="button" key={chapter.title} onClick={() => jumpToChapter(index)}><span>{chapter.chapter}</span><strong>{chapter.title}</strong><small>{String((chapterStarts[index] ?? 0) + 1).padStart(2, '0')}</small></button>)}</div></>}
             {panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={() => setPanel(null)} /><div className="trace-list">{[...traces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => jumpToChapter(trace.chapterIndex)}><small>{trace.chapter}</small><blockquote>“<span className={traceLineClass(trace)}>{trace.quote}</span>”</blockquote>{trace.foxNotes?.map((note) => <p key={note.id}><b>小狐狸</b>：{note.text}</p>)}{trace.fish && <p className="fish-note"><b>小鱼</b>：{trace.fish}</p>}</button>)}</div></>}
             {panel === 'stats' && <><PanelHeading eyebrow="READING LIFE" title="阅读统计" close={() => setPanel(null)} /><div className="stats-grid stats-grid-v2"><div><strong>38<sup>%</sup></strong><small>约一小时后读完</small></div><div><strong>4 小时 12 分</strong><small>累计阅读</small></div><div><strong>{traces.length} 条</strong><small>笔记与划线</small></div></div></>}
             {panel === 'type' && <><PanelHeading eyebrow="TYPESETTING" title="排版" close={() => setPanel(null)} /><div className="type-settings">
@@ -965,7 +960,7 @@ function App() {
       <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} onImportClick={handleImportClick} />
       <nav className="shelf-filters" aria-label="书架分类">
         {filters.map((item) => {
-          const count = item.id === 'all' ? books.length : books.filter((book) => book.status === item.id).length
+          const count = item.id === 'all' ? shelfBooks.length : shelfBooks.filter((book) => book.status === item.id).length
           return <button type="button" key={item.id} className={filter === item.id ? 'is-active' : ''} onClick={() => setFilter(item.id)} aria-label={`${item.label}，${count} 本`} aria-pressed={filter === item.id}><span>{item.label}</span></button>
         })}
       </nav>
@@ -973,11 +968,11 @@ function App() {
         <section className="book-list" aria-label="书籍列表">
           {filteredBooks.map((book) => (
             <article className="book-row book-row-v2" key={book.id}>
-              <button className="book-cover-button" type="button" onClick={() => { setRoomBook(book); setScreen('room') }} aria-label={`查看《${book.title}》的书籍档案`}><BookCover book={book} /><small>查看书籍档案</small></button>
-              <button className="book-main book-main-button" type="button" onClick={() => { setRoomBook(book); if (book.id === 'rain-room') openReaderAtChapter(0); else showToast('这本书还没有拆封。') }} aria-label={`${book.progress ? '继续阅读' : '打开'}《${book.title}》`}>
+              <button className="book-cover-button" type="button" onClick={() => openRoom(book)} aria-label={`查看《${book.title}》的书籍档案`}><BookCover book={book} /><small>查看书籍档案</small></button>
+              <button className="book-main book-main-button" type="button" onClick={() => { if (openableBookIds.has(book.id)) openReaderAtChapter(0, book); else { setRoomBook(book); showToast('这本书还没有拆封。') } }} aria-label={`${book.progress ? '继续阅读' : '打开'}《${book.title}》`}>
                 <span className="book-state">{book.statusLabel} {book.progress > 0 && `· ${book.progress}%`}</span><strong>{book.title}</strong><em>{book.englishTitle}</em><span className="book-author">{book.author}</span><span className="book-description">{book.description}</span><span className="open-book">{book.progress ? '继续阅读' : '翻开看看'} <ChevronRight /></span>
               </button>
-              <button className="book-trace book-trace-button" type="button" onClick={() => { setRoomBook(book); if (book.id === 'rain-room') openReaderAtChapter(0); else showToast('这里还没有阅读痕迹。') }} aria-label={`查看《${book.title}》最近停留的位置`}>
+              <button className="book-trace book-trace-button" type="button" onClick={() => { if (openableBookIds.has(book.id)) openReaderAtChapter(0, book); else { setRoomBook(book); showToast('这里还没有阅读痕迹。') } }} aria-label={`查看《${book.title}》最近停留的位置`}>
                 <BookOpenText /><small>{book.lastChapter ? `最近停留 · ${book.lastChapter}` : '尚未开始阅读'}</small>
                 <q>{book.lastChapter ? book.quote : '这本书还在等待第一次翻开。'}</q>
                 <span>{book.lastChapter ? '回到这句话' : '翻开看看'} <ChevronRight /></span>
@@ -988,7 +983,7 @@ function App() {
       ) : (
         <section className="book-grid" aria-label="封面书架">
           {filteredBooks.map((book) => (
-            <button className="grid-cover-button" type="button" key={book.id} onClick={() => { setRoomBook(book); setScreen('room') }} aria-label={`查看《${book.title}》的书籍档案`}>
+            <button className="grid-cover-button" type="button" key={book.id} onClick={() => openRoom(book)} aria-label={`查看《${book.title}》的书籍档案`}>
               <BookCover book={book} />
             </button>
           ))}

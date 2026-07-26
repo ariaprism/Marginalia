@@ -411,6 +411,22 @@ blockquote {
 .tap-hint-left { left: 18px; }.tap-hint-right { right: 18px; }
 .reader-page:hover .tap-hint { opacity: .22; }
 
+.reader-loading {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: inherit;
+  animation: reader-loading-in 220ms ease-out;
+}
+.reader-day .reader-loading { background: radial-gradient(circle at 50% 28%, #f7f0e3 0, #e5d7c3 74%); }
+.reader-night .reader-loading { background: radial-gradient(circle at 50% 25%, #40352f 0, #211d1b 78%); }
+.reader-loading span { color: #a4837a; font-size: 11px; letter-spacing: .28em; animation: reader-loading-pulse 1.6s ease-in-out infinite; }
+.reader-night .reader-loading span { color: #b09b8d; }
+@keyframes reader-loading-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes reader-loading-pulse { 0%, 100% { opacity: .45 } 50% { opacity: 1 } }
+
 .reader-topbar {
   position: fixed;
   z-index: 30;
