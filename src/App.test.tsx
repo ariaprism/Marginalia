@@ -52,7 +52,11 @@ describe('Marginalia visual prototype', () => {
     await waitFor(() => expect(screen.getByText('已经藏入书架。')).toBeInTheDocument())
 
     // 进入导入书的书房：示例书排在前面，导入的那本在后面。
-    const importedCover = (await screen.findAllByRole('button', { name: /查看《雨夜书房》的书籍档案/ }))[1]
+    // 「藏入书架」的提示比书架重新载完早一步，所以要等到两本都在了再点第二本。
+    await waitFor(async () => {
+      expect(await screen.findAllByRole('button', { name: /查看《雨夜书房》的书籍档案/ })).toHaveLength(2)
+    })
+    const importedCover = screen.getAllByRole('button', { name: /查看《雨夜书房》的书籍档案/ })[1]
     fireEvent.click(importedCover)
 
     await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: '章节与痕迹' })).toBeInTheDocument())
@@ -66,6 +70,33 @@ describe('Marginalia visual prototype', () => {
     fireEvent.click(screen.getByRole('article'))
     fireEvent.click(screen.getByRole('button', { name: '页边痕迹' }))
     expect(screen.getByText('这本书还没有留下痕迹。')).toBeInTheDocument()
+  })
+
+  it('keeps a highlight and its note after the app is reloaded', async () => {
+    const { unmount } = render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /继续阅读《雨夜书房》/ }))
+
+    const sentence = screen.getByText('灯亮起来以前，书房先听见了雨。')
+    fireEvent.click(sentence)
+    fireEvent.click(screen.getByRole('button', { name: '划线' }))
+    await waitFor(() => expect(sentence).toHaveClass('has-user-highlight'))
+
+    fireEvent.click(sentence)
+    fireEvent.click(screen.getByRole('button', { name: '留痕' }))
+    fireEvent.change(screen.getByPlaceholderText('Thoughts...'), { target: { value: '这一句要留到下次打开。' } })
+    fireEvent.click(screen.getByRole('button', { name: '留下' }))
+    expect(await screen.findByText('这一句要留到下次打开。')).toBeInTheDocument()
+
+    // 关掉整个应用再打开，等价于刷新页面：痕迹只能从 IndexedDB 回来。
+    unmount()
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: /继续阅读《雨夜书房》/ }))
+
+    const reloaded = await screen.findByText('灯亮起来以前，书房先听见了雨。')
+    await waitFor(() => expect(reloaded).toHaveClass('has-user-highlight'))
+    fireEvent.click(screen.getByRole('article'))
+    fireEvent.click(screen.getByRole('button', { name: '页边痕迹' }))
+    expect(screen.getByText(/这一句要留到下次打开/)).toBeInTheDocument()
   })
 
   it('filters the mobile-friendly shelf', () => {
@@ -96,9 +127,11 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByRole('article')).toHaveStyle({ '--reader-font-family': 'var(--font-reading-sans)' })
   })
 
-  it('shows a quiet trace card without chapter chrome or footer actions', () => {
+  it('shows a quiet trace card without chapter chrome or footer actions', async () => {
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: /继续阅读《雨夜书房》/ }))
+    // 预置痕迹是启动时播种进 IndexedDB 的，要等它读回来才有批注可看。
+    await waitFor(() => expect(document.querySelector('.has-user-highlight')).toBeInTheDocument())
     fireEvent.click(screen.getByText('句子需要重量'))
 
     const dialog = screen.getByRole('dialog', { name: '划线详情' })
@@ -118,7 +151,7 @@ describe('Marginalia visual prototype', () => {
     expect(screen.queryByRole('dialog', { name: '重温批注' })).not.toBeInTheDocument()
   })
 
-  it('selects and extends a contiguous sentence range', () => {
+  it('selects and extends a contiguous sentence range', async () => {
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: /继续阅读《雨夜书房》/ }))
     const firstSentence = screen.getByText('灯亮起来以前，书房先听见了雨。')
@@ -139,9 +172,10 @@ describe('Marginalia visual prototype', () => {
     fireEvent.click(screen.getByRole('article'))
     expect(screen.queryByRole('toolbar', { name: '句子操作' })).not.toBeInTheDocument()
 
+    // 从这里开始每一次写入都要落 IndexedDB 再读回来，所以断言都得等一拍。
     fireEvent.click(firstSentence)
     fireEvent.click(screen.getByRole('button', { name: '划线' }))
-    expect(firstSentence).toHaveClass('has-user-highlight')
+    await waitFor(() => expect(firstSentence).toHaveClass('has-user-highlight'))
     expect(screen.queryByRole('toolbar', { name: '句子操作' })).not.toBeInTheDocument()
 
     fireEvent.click(firstSentence)
@@ -150,14 +184,13 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByRole('dialog', { name: '留痕' }).querySelector('.note-quote .trace-line-highlight')).toBeInTheDocument()
     fireEvent.change(screen.getByPlaceholderText('Thoughts...'), { target: { value: '雨声把这一句托住了。' } })
     fireEvent.click(screen.getByRole('button', { name: '留下' }))
+    expect(await screen.findByText('雨声把这一句托住了。')).toBeInTheDocument()
     const sentDialog = screen.getByRole('dialog', { name: '重温批注' })
-    expect(sentDialog).toBeInTheDocument()
     expect(sentDialog.querySelector('.sent-note time')?.textContent).toMatch(/^\d{2}\/\d{2}\/\d{2}：\d{2}$/)
-    expect(screen.getByText('雨声把这一句托住了。')).toBeInTheDocument()
     fireEvent.change(screen.getByPlaceholderText('Thoughts...'), { target: { value: '后来又想起了窗外的风。' } })
     fireEvent.click(screen.getByRole('button', { name: '留下' }))
+    expect(await screen.findByText('后来又想起了窗外的风。')).toBeInTheDocument()
     expect(sentDialog.querySelectorAll('.sent-note')).toHaveLength(2)
-    expect(screen.getByText('后来又想起了窗外的风。')).toBeInTheDocument()
     fireEvent.click(document.querySelector('.note-backdrop') as HTMLElement)
 
     fireEvent.click(firstSentence)
@@ -176,24 +209,25 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByText(/雨声把这一句托住了/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '关闭页边痕迹' }))
+    // 取消划线只删划线，批注留着：所以实线没了、批注虚线还在。
     fireEvent.click(firstSentence)
     fireEvent.click(screen.getByRole('button', { name: '抹去' }))
-    expect(firstSentence).not.toHaveClass('has-user-highlight')
+    await waitFor(() => expect(firstSentence).not.toHaveClass('has-user-highlight'))
     expect(firstSentence).toHaveClass('has-annotation')
 
     fireEvent.click(firstSentence)
     fireEvent.click(screen.getByRole('button', { name: '划线' }))
-    expect(firstSentence).toHaveClass('has-user-highlight')
+    await waitFor(() => expect(firstSentence).toHaveClass('has-user-highlight'))
 
     fireEvent.click(secondSentence)
     fireEvent.click(screen.getByRole('button', { name: '留痕' }))
     expect(screen.getByRole('dialog', { name: '留痕' }).querySelector('.note-quote .trace-line-annotation')).toBeInTheDocument()
     fireEvent.change(screen.getByPlaceholderText('Thoughts...'), { target: { value: '这里只留下批注虚线。' } })
     fireEvent.click(screen.getByRole('button', { name: '留下' }))
-    expect(secondSentence).toHaveClass('has-annotation')
+    await waitFor(() => expect(secondSentence).toHaveClass('has-annotation'))
     expect(secondSentence).not.toHaveClass('has-user-highlight')
     fireEvent.click(screen.getByRole('button', { name: /批注操作/ }))
     fireEvent.click(screen.getByRole('button', { name: '抹去文字' }))
-    expect(secondSentence).not.toHaveClass('has-annotation')
+    await waitFor(() => expect(secondSentence).not.toHaveClass('has-annotation'))
   })
 })

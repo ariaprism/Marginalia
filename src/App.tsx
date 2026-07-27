@@ -16,14 +16,27 @@ import {
 } from 'lucide-react'
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react'
+import { seedSampleTraces } from './data/local/seedSampleTraces'
+import {
+  loadTraces,
+  passageKey,
+  persistHighlight,
+  persistNote,
+  removeHighlight,
+  removeNote as deleteNoteRecord,
+} from './data/local/traceStore'
+import type { Locator } from './domain/locator'
 import { useBooks } from './features/bookshelf/useBooks'
 import { importEpubFile } from './features/import-book/importEpub'
 import { loadBookChapters, sampleChapters, type ChapterText } from './reader/bookContent'
+import { locatorFromSentenceRange, segmentChapters } from './reader/sentenceAnchor'
+import type { NoteEntry, Trace } from './reader/trace'
 import './App.css'
 
 type ShelfFilter = 'all' | 'reading' | 'wish' | 'finished'
@@ -47,23 +60,6 @@ type Book = {
   lastChapter?: string
   tone: string
 }
-
-type Trace = {
-  id: string
-  /** 痕迹归属的书，避免不同书之间互相串数据。 */
-  bookId: string
-  chapterIndex: number
-  sentenceStart?: number
-  sentenceEnd?: number
-  highlighted?: boolean
-  chapter: string
-  quote: string
-  foxNotes?: NoteEntry[]
-  fish?: string
-  fishAt?: string
-}
-
-type NoteEntry = { id: string; text: string; createdAt: string }
 
 type ReflowAnchor = { chapterIndex: number; ratio: number }
 type SentenceSelection = { chapterIndex: number; start: number; end: number }
@@ -121,43 +117,6 @@ const books: Book[] = [
     tone: 'ochre',
   },
 ]
-
-/** 示例书《雨夜书房》预置的痕迹，仅属于 rain-room 这一本。 */
-const initialTraces: Trace[] = [
-  {
-    id: 'trace-1',
-    bookId: 'rain-room',
-    chapterIndex: 0,
-    chapter: '第一章 · 雨先抵达',
-    quote: '句子需要重量。',
-    highlighted: true,
-    foxNotes: [{ id: 'fox-note-1', text: '有些话打在屏幕上很轻，写进书里以后却会留下来。', createdAt: '07/14/18：47' }],
-  },
-  {
-    id: 'trace-2',
-    bookId: 'rain-room',
-    chapterIndex: 1,
-    chapter: '第二章 · 没有寄出的页码',
-    quote: '我以为有人提前知道了我的心事。',
-    highlighted: true,
-    foxNotes: [{ id: 'fox-note-2', text: '读到这里时，好像被一本陌生的书认了出来。', createdAt: '07/15/16：42' }],
-    fish: '也许书并不知道，只是它替那一刻保留了一个位置。',
-    fishAt: '07/15/17：00',
-  },
-  {
-    id: 'trace-3',
-    bookId: 'rain-room',
-    chapterIndex: 3,
-    chapter: '第四章 · 替沉默装订',
-    quote: '空白并不比文字轻。',
-    highlighted: true,
-  },
-]
-
-function formatTraceTime(date: Date) {
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())}/${pad(date.getHours())}：${pad(date.getMinutes())}`
-}
 
 function traceLineClass(trace: Trace) {
   if (trace.highlighted) return 'trace-line-highlight'
@@ -279,9 +238,11 @@ function App() {
   const [noteComposerOpen, setNoteComposerOpen] = useState(false)
   const [noteMenuTargetId, setNoteMenuTargetId] = useState<string | null>(null)
   const [noteTargetTraceId, setNoteTargetTraceId] = useState<string | null>(null)
+  /** 正在写的批注要落到哪一处原文。从痕迹详情进来时没有选区，只能靠它。 */
+  const [noteTargetLocator, setNoteTargetLocator] = useState<Locator | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState('')
-  const [traces, setTraces] = useState<Trace[]>(initialTraces)
+  const [traces, setTraces] = useState<Trace[]>([])
   const [activeTrace, setActiveTrace] = useState<Trace | null>(null)
   const [returnPage, setReturnPage] = useState<number | null>(null)
   const [pendingChapter, setPendingChapter] = useState<number | null>(null)
@@ -292,22 +253,13 @@ function App() {
   const viewportRef = useRef<HTMLDivElement>(null)
   const flowRef = useRef<HTMLDivElement>(null)
   const reflowAnchorRef = useRef<ReflowAnchor | null>(null)
+  /** 渲染期同步，供异步读取回来时判断「现在还在这本书上吗」。 */
+  const currentBookIdRef = useRef(roomBook.id)
+  currentBookIdRef.current = roomBook.id
 
   const booksState = useBooks(importKey)
 
-  const segmentedChapters = useMemo(() => {
-    const segmenter = new Intl.Segmenter('zh-CN', { granularity: 'sentence' })
-    return readerChapters.map((chapter) => {
-      let sentenceIndex = 0
-      const paragraphs = chapter.paragraphs.map((paragraph) => (
-        Array.from(segmenter.segment(paragraph), ({ segment }) => ({
-          index: sentenceIndex++,
-          text: segment,
-        }))
-      ))
-      return { paragraphs, sentences: paragraphs.flat() }
-    })
-  }, [readerChapters])
+  const segmentedChapters = useMemo(() => segmentChapters(readerChapters), [readerChapters])
 
   const loadedBooks: Book[] = useMemo(() => {
     if (booksState.status !== 'ready') return []
@@ -347,6 +299,48 @@ function App() {
     () => traces.filter((trace) => trace.bookId === roomBook.id),
     [roomBook.id, traces],
   )
+
+  /**
+   * 从库里重新读出当前这本书的痕迹。
+   *
+   * 每次写入之后都要走一遍，不在本地拼状态：句子区间是 Locator 重新锚定出来的，
+   * 本地凭选区拼出的区间和库里算出来的可能差一句（比如划线正好压在句子边界上），
+   * 那样界面和数据库就开始各说各话。读一遍最慢也就是一次 IndexedDB 扫描。
+   */
+  const refreshTraces = useCallback(async () => {
+    const bookId = roomBook.id
+    const loaded = await loadTraces(bookId, readerChapters, segmentedChapters)
+    // 读的过程中可能已经翻去别的书了，只有仍然停在这本书上才写回状态，
+    // 否则会把上一本书的痕迹盖到新书上。
+    if (currentBookIdRef.current === bookId) setTraces(loaded)
+  }, [readerChapters, roomBook.id, segmentedChapters])
+
+  /** 播种只跑一次，且必须排在第一次读取之前，否则示例书第一眼是空的。 */
+  const seededRef = useRef<Promise<void> | null>(null)
+
+  useEffect(() => {
+    // 章节还在加载时 readerChapters 仍是上一本书的，这时候读出来的句子区间会锚到
+    // 错的正文上。等 ready 再读，界面上只是痕迹晚一帧出现。
+    if (!readerChaptersReady) return
+    let cancelled = false
+    seededRef.current ??= seedSampleTraces()
+    seededRef.current
+      .then(() => { if (!cancelled) return refreshTraces() })
+      .catch((error) => { if (!cancelled) console.error('读取痕迹失败', error) })
+    return () => { cancelled = true }
+  }, [readerChaptersReady, refreshTraces])
+
+  /** 当前选区对应的稳定定位。写库一律用它，不用句子序号。 */
+  const locatorForSelection = useCallback((selection: SentenceSelection) => (
+    locatorFromSentenceRange(
+      roomBook.id,
+      selection.chapterIndex,
+      segmentedChapters[selection.chapterIndex],
+      readerChapters[selection.chapterIndex]?.paragraphs ?? [],
+      selection.start,
+      selection.end,
+    )
+  ), [readerChapters, roomBook.id, segmentedChapters])
 
   const currentChapterIndex = useMemo(() => {
     let active = 0
@@ -599,51 +593,44 @@ function App() {
     else { setChromeVisible((visible) => !visible); setPanel(null) }
   }
 
-  const saveHighlight = () => {
+  const saveHighlight = async () => {
     if (!selectedText || !sentenceSelection) return
-    const chapterIndex = sentenceSelection?.chapterIndex ?? currentChapterIndex
-    setTraces((current) => {
-      const existingIndex = current.findIndex((trace) => trace.bookId === roomBook.id
-        && trace.chapterIndex === chapterIndex
-        && trace.sentenceStart === sentenceSelection.start
-        && trace.sentenceEnd === sentenceSelection.end)
-      if (existingIndex >= 0) {
-        return current.map((trace, index) => index === existingIndex
-          ? { ...trace, quote: selectedText, highlighted: true }
-          : trace)
-      }
-      return [...current, {
-        id: `trace-${Date.now()}`,
-        bookId: roomBook.id,
-        chapterIndex,
-        sentenceStart: sentenceSelection.start,
-        sentenceEnd: sentenceSelection.end,
-        highlighted: true,
-        chapter: `${readerChapters[chapterIndex].chapter} · ${readerChapters[chapterIndex].title}`,
-        quote: selectedText,
-      }]
-    })
+    const locator = locatorForSelection(sentenceSelection)
+    if (!locator) {
+      showToast('这句话暂时没法留下', '没能在正文里定位到这处选区。')
+      return
+    }
     clearSelection()
-    showToast('这句话已经留在页边。')
+    try {
+      await persistHighlight(locator)
+      await refreshTraces()
+      showToast('这句话已经留在页边。')
+    } catch (error) {
+      showToast('这处划线没有存下来', error instanceof Error ? error.message : String(error))
+    }
   }
 
-  const cancelHighlight = () => {
+  /** 取消划线只删划线本身；这处如果还有批注，批注和她的回信留着。 */
+  const cancelHighlight = async () => {
     if (!sentenceSelection) return
-    setTraces((current) => current.flatMap((trace) => {
-      const isCurrentRange = trace.bookId === roomBook.id
-        && trace.chapterIndex === sentenceSelection.chapterIndex
-        && trace.sentenceStart === sentenceSelection.start
-        && trace.sentenceEnd === sentenceSelection.end
-      if (!isCurrentRange) return [trace]
-      if (trace.foxNotes?.length || trace.fish) return [{ ...trace, highlighted: false }]
-      return []
-    }))
+    const locator = selectedRangeTrace?.locator ?? locatorForSelection(sentenceSelection)
+    if (!locator) return
     clearSelection()
-    showToast('已经取消这处划线。')
+    try {
+      await removeHighlight(locator)
+      await refreshTraces()
+      showToast('已经取消这处划线。')
+    } catch (error) {
+      showToast('这处划线没能取消', error instanceof Error ? error.message : String(error))
+    }
   }
 
   const openSentenceNoteSheet = () => {
     setNoteTargetTraceId(selectedRangeTrace?.id ?? null)
+    setNoteTargetLocator(
+      selectedRangeTrace?.locator
+      ?? (sentenceSelection ? locatorForSelection(sentenceSelection) : null),
+    )
     setEditingNoteId(null)
     setNoteDraft('')
     setNoteMenuTargetId(null)
@@ -654,58 +641,45 @@ function App() {
     setNoteComposerOpen(false)
     setNoteMenuTargetId(null)
     setNoteTargetTraceId(null)
+    setNoteTargetLocator(null)
     setEditingNoteId(null)
     setNoteDraft('')
     clearSelection()
   }
 
-  const saveNote = () => {
-    if (!selectedText || !noteDraft.trim()) return
-    const chapterIndex = sentenceSelection?.chapterIndex ?? currentChapterIndex
-    const targetId = noteTargetTraceId ?? selectedRangeTrace?.id ?? `trace-${Date.now()}`
-    const noteTimestamp = formatTraceTime(new Date())
-    const noteId = editingNoteId ?? `fox-note-${Date.now()}-${noteEntries.length}`
-    const nextNote = { id: noteId, text: noteDraft.trim(), createdAt: noteTimestamp }
-    setTraces((current) => {
-      if (current.some((trace) => trace.id === targetId)) {
-        return current.map((trace) => {
-          if (trace.id !== targetId) return trace
-          const foxNotes = trace.foxNotes ?? []
-          return {
-            ...trace,
-            quote: selectedText,
-            foxNotes: editingNoteId
-              ? foxNotes.map((note) => note.id === editingNoteId ? { ...note, text: nextNote.text } : note)
-              : [...foxNotes, nextNote],
-          }
-        })
-      }
-      const existingIndex = sentenceSelection ? current.findIndex((trace) => trace.bookId === roomBook.id
-        && trace.chapterIndex === chapterIndex
-        && trace.sentenceStart === sentenceSelection.start
-        && trace.sentenceEnd === sentenceSelection.end) : -1
-      if (existingIndex >= 0) {
-        return current.map((trace, index) => index === existingIndex
-          ? { ...trace, quote: selectedText, foxNotes: [...(trace.foxNotes ?? []), nextNote], highlighted: trace.highlighted ?? false }
-          : trace)
-      }
-      return [...current, {
-        id: targetId,
-        bookId: roomBook.id,
-        chapterIndex,
-        sentenceStart: sentenceSelection?.start,
-        sentenceEnd: sentenceSelection?.end,
-        highlighted: false,
-        chapter: `${readerChapters[chapterIndex].chapter} · ${readerChapters[chapterIndex].title}`,
-        quote: selectedText,
-        foxNotes: [nextNote],
-      }]
-    })
-    setNoteTargetTraceId(targetId)
+  /**
+   * 写下或改写一条批注。
+   *
+   * 定位有三个来源，按可靠程度取：正在写的那处痕迹自带的 locator（从痕迹详情进来时
+   * 没有选区）、当前选区已有痕迹的 locator、最后才由选区现算一个。
+   */
+  const saveNote = async () => {
+    const text = noteDraft.trim()
+    if (!selectedText || !text) return
+
+    const locator = noteTargetLocator
+      ?? activeNoteTrace?.locator
+      ?? selectedRangeTrace?.locator
+      ?? (sentenceSelection ? locatorForSelection(sentenceSelection) : null)
+    if (!locator) {
+      showToast('这条批注暂时没法夹进去', '没能在正文里定位到这处选区。')
+      return
+    }
+
+    const highlighted = Boolean((activeNoteTrace ?? selectedRangeTrace)?.highlighted)
     setEditingNoteId(null)
     setNoteDraft('')
     setNoteMenuTargetId(null)
-    showToast('批注已经夹进这一页。')
+    try {
+      await persistNote(locator, text, editingNoteId ?? undefined, highlighted)
+      // 痕迹 id 就是定位串，所以写完之后这个 id 一定能对上重新读出来的那条痕迹。
+      setNoteTargetTraceId(passageKey(locator.position))
+      setNoteTargetLocator(locator)
+      await refreshTraces()
+      showToast('批注已经夹进这一页。')
+    } catch (error) {
+      showToast('这条批注没有存下来', error instanceof Error ? error.message : String(error))
+    }
   }
 
   const reviseNote = (note: NoteEntry) => {
@@ -714,25 +688,25 @@ function App() {
     setNoteMenuTargetId(null)
   }
 
-  const removeNote = (noteId: string) => {
-    if (!noteTargetTraceId) return
-    setTraces((current) => current.flatMap((trace) => {
-      if (trace.id !== noteTargetTraceId) return [trace]
-      const foxNotes = (trace.foxNotes ?? []).filter((note) => note.id !== noteId)
-      if (foxNotes.length || trace.highlighted || trace.fish) return [{ ...trace, foxNotes }]
-      return []
-    }))
+  const removeNote = async (noteId: string) => {
     if (editingNoteId === noteId) {
       setEditingNoteId(null)
       setNoteDraft('')
     }
     setNoteMenuTargetId(null)
-    showToast('这段文字已经抹去。')
+    try {
+      await deleteNoteRecord(noteId)
+      await refreshTraces()
+      showToast('这段文字已经抹去。')
+    } catch (error) {
+      showToast('这段文字没能抹去', error instanceof Error ? error.message : String(error))
+    }
   }
 
   const reviseActiveTraceNote = (trace: Trace, note: NoteEntry) => {
     setSelectedText(trace.quote)
     setNoteTargetTraceId(trace.id)
+    setNoteTargetLocator(trace.locator ?? null)
     setEditingNoteId(note.id)
     setNoteDraft(note.text)
     setNoteMenuTargetId(null)
@@ -740,16 +714,9 @@ function App() {
     setNoteComposerOpen(true)
   }
 
-  const removeActiveTraceNote = (trace: Trace, noteId: string) => {
-    setTraces((current) => current.flatMap((item) => {
-      if (item.id !== trace.id) return [item]
-      const foxNotes = (item.foxNotes ?? []).filter((note) => note.id !== noteId)
-      if (foxNotes.length || item.highlighted || item.fish) return [{ ...item, foxNotes }]
-      return []
-    }))
-    setNoteMenuTargetId(null)
+  const removeActiveTraceNote = async (noteId: string) => {
     setActiveTrace(null)
-    showToast('这段文字已经抹去。')
+    await removeNote(noteId)
   }
 
   const jumpToChapter = (chapterIndex: number) => {
@@ -760,6 +727,19 @@ function App() {
     setActiveTrace(null)
   }
 
+  /**
+   * 用原文反查定位。
+   *
+   * 示例书正文里预置的那句 highlight 没有对应的痕迹记录，但从它写下的批注也得能落库，
+   * 所以按文字找到所在句子，再走和手动划线完全相同的那条 Locator 构造路径。
+   */
+  const locatorForQuote = (chapterIndex: number, quote: string): Locator | null => {
+    const segmented = segmentedChapters[chapterIndex]
+    if (!segmented) return null
+    const run = segmented.sentences.find((sentence) => sentence.text.includes(quote))
+    return run ? locatorForSelection({ chapterIndex, start: run.index, end: run.index }) : null
+  }
+
   const openExistingTrace = (chapterIndex: number, quote: string) => {
     const trace = bookTraces.find((item) => item.chapterIndex === chapterIndex)
     setActiveTrace(trace ?? {
@@ -768,6 +748,7 @@ function App() {
       chapterIndex,
       chapter: `${readerChapters[chapterIndex].chapter} · ${readerChapters[chapterIndex].title}`,
       quote,
+      locator: locatorForQuote(chapterIndex, quote) ?? undefined,
     })
     setNoteMenuTargetId(null)
     setPanel(null)
@@ -925,9 +906,9 @@ function App() {
             >
               <blockquote>“<span className={traceLineClass(activeTrace)}>{activeTrace.quote}</span>”</blockquote>
               {activeTrace.foxNotes?.length ? activeTrace.foxNotes.map((note) => <div className="trace-note-block" key={note.id}>
-                <div className="trace-note-meta"><b>小狐狸</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}>···</button>{noteMenuTargetId === note.id && <span className="note-action-menu trace-note-menu"><button type="button" onClick={() => reviseActiveTraceNote(activeTrace, note)}>修订</button><button type="button" onClick={() => removeActiveTraceNote(activeTrace, note.id)}>抹去文字</button></span>}</span></div>
+                <div className="trace-note-meta"><b>小狐狸</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}>···</button>{noteMenuTargetId === note.id && <span className="note-action-menu trace-note-menu"><button type="button" onClick={() => reviseActiveTraceNote(activeTrace, note)}>修订</button><button type="button" onClick={() => removeActiveTraceNote(note.id)}>抹去文字</button></span>}</span></div>
                 <p>{note.text}</p>
-              </div>) : <button className="empty-note" type="button" onClick={() => { setSelectedText(activeTrace.quote); setNoteTargetTraceId(activeTrace.id); setEditingNoteId(null); setNoteDraft(''); setNoteMenuTargetId(null); setActiveTrace(null); setNoteComposerOpen(true) }}>这里还没有文字。留下一道痕迹</button>}
+              </div>) : <button className="empty-note" type="button" onClick={() => { setSelectedText(activeTrace.quote); setNoteTargetTraceId(activeTrace.id); setNoteTargetLocator(activeTrace.locator ?? null); setEditingNoteId(null); setNoteDraft(''); setNoteMenuTargetId(null); setActiveTrace(null); setNoteComposerOpen(true) }}>这里还没有文字。留下一道痕迹</button>}
               {activeTrace.fish && <div className="trace-note-block fish-detail"><div className="trace-note-meta"><b>小鱼</b><time>{activeTrace.fishAt}</time></div><p>{activeTrace.fish}</p></div>}
             </section>
           </div>

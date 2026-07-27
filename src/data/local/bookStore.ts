@@ -80,6 +80,10 @@ export async function getHighlights(bookId: string): Promise<Highlight[]> {
   return getAllByIndex('highlights', 'bookId', bookId)
 }
 
+export async function deleteHighlight(id: string): Promise<void> {
+  await withTransaction('highlights', 'readwrite', (store) => store.delete(id))
+}
+
 export async function saveAnnotation(annotation: Annotation): Promise<void> {
   await withTransaction('annotations', 'readwrite', (store) => store.put(annotation))
 }
@@ -88,10 +92,18 @@ export async function getAnnotations(bookId: string): Promise<Annotation[]> {
   return getAllByIndex('annotations', 'bookId', bookId)
 }
 
+export async function deleteAnnotation(id: string): Promise<void> {
+  await withTransaction('annotations', 'readwrite', (store) => store.delete(id))
+}
+
 export async function saveMarginalia(marginalia: Marginalia): Promise<void> {
   await withTransaction('marginalia', 'readwrite', (store) => store.put(marginalia))
 }
 
 export async function getMarginalia(bookId: string): Promise<Marginalia[]> {
   return getAllByIndex('marginalia', 'bookId', bookId)
+}
+
+export async function deleteMarginalia(id: string): Promise<void> {
+  await withTransaction('marginalia', 'readwrite', (store) => store.delete(id))
 }

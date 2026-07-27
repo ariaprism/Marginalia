@@ -1,7 +1,28 @@
 const DB_NAME = 'marginalia'
 const DB_VERSION = 1
 
+/**
+ * 连接缓存。
+ *
+ * 每次读写都重新 open 有两个问题：一是白读一次握手；二是并发 open 同一个还没建好的库
+ * 时，几个请求会同时进 onupgradeneeded，谁先建完谁后建就成了运气——读到一半发现
+ * objectStore 还不存在。缓存 Promise 之后，并发调用共用同一次 open。
+ *
+ * 连同 indexedDB 本身一起记下来：测试里每个用例会换一个新的 IDBFactory，
+ * 换掉之后旧连接指向的是已经丢掉的那个库，必须重新开。
+ */
+let cached: { factory: IDBFactory; db: Promise<IDBDatabase> } | null = null
+
 export function openMarginaliaDB(): Promise<IDBDatabase> {
+  if (cached && cached.factory === indexedDB) return cached.db
+  const db = openFresh()
+  cached = { factory: indexedDB, db }
+  // 打开失败不留下坏缓存，否则后面每次调用都拿到同一个 rejected promise。
+  db.catch(() => { if (cached?.db === db) cached = null })
+  return db
+}
+
+function openFresh(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
     request.onerror = () => reject(request.error)
