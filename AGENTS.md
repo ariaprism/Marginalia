@@ -10,7 +10,7 @@
 
 - Phase：Phase 1B — Living Book / 真实 EPUB（Phase 0 地基与 Phase 1A 视觉原型已完成）
 - 状态：进行中
-- 当前目标：把 EPUB 解析与 IndexedDB 持久化接入现有 UI，让书架与阅读器从本地存储读取真实书籍。
+- 当前目标：导入弹窗（书名／作者可改、封面上传、简介）与阅读位置的保存恢复。书籍、章节、划线与批注已经全部走 IndexedDB。
 
 ## 已完成
 
@@ -42,30 +42,42 @@
 - [x] 生成来源合法的测试 EPUB《雨夜书房》
 - [x] 实现基于 JSZip 的真实 EPUB 解析器（元数据、目录、章节）
 - [x] 接入 IndexedDB：持久化书籍、EPUB 原文件、章节、阅读位置、划线、批注与她留下的文字
+- [x] 阅读器渲染真实 EPUB 章节，书架与书籍小房间读取本地书籍
+- [x] 划线与批注写入 IndexedDB，刷新后仍在；示例书痕迹改为播种进同一张表
 
 ## 正在进行
 
-- [ ] 将 EPUB 解析与 IndexedDB 接入现有 UI（已接入上传、书架列表；阅读器渲染真实章节待完成）
+- [ ] 将真实 EPUB 接入 UI（导入弹窗与封面提取待做，见下）
 
 ## 下次开工：直接从这里继续
 
 当小狐狸说“小G，我们接下来干嘛”时，无需重新盘视觉稿，直接回答并推进下面的顺序：
 
-1. 将 `src/domain/` 定义接入现有书架与阅读器，替换硬编码的模拟书籍数据。
-2. 实现 EPUB 上传入口：用户选择 `.epub` 文件后，调用 `parseEpub` 解析，并把书籍元数据、章节、原文件存入 IndexedDB。
-3. 书架从 IndexedDB 读取书籍列表；点击真实书籍进入书籍小房间与阅读器。
-4. 阅读器从 IndexedDB 读取章节 HTML 并渲染正文；保留现有的分页、句子选择、划线与批注交互。
-5. 将当前的划线与批注状态从 `useState` 迁移到 IndexedDB，刷新后仍然存在。
-6. 保存和恢复阅读位置，使用 `ReadingProgress` + `Locator`。
+1. 导入弹窗：显示解析出的书名与作者并允许修改，支持上传封面与填写简介，确认后才入库。
+2. 从 EPUB 里提取封面图，作为弹窗里的默认封面。
+3. 保存和恢复阅读位置，使用 `ReadingProgress` + `Locator`。翻页与离开阅读器时写入，重进时按 `resolveLocator` 回到同一句附近。
+4. 等功能大致齐了，把 `SEED_SAMPLE_TRACES` 翻成 `false` 并清一次库，示例书变回空书。
 
 小狐狸不需要提前准备代码；遇到会改变产品语义的选择（例如上传入口的文案、解析失败的处理方式）再请小狐狸决定。
+
+## 痕迹持久化在哪
+
+- `src/data/local/db.ts` — 打开库、事务与索引读取。连接按 `IDBFactory` 缓存，不要改回每次调用重开。
+- `src/data/local/traceStore.ts` — 痕迹的读写。`loadTraces` 把三张表合成 `Trace[]`，`passageKey` 是主键，`nextTimestamp` 保证时间戳严格递增。
+- `src/data/local/seedSampleTraces.ts` — 示例书痕迹的幂等播种，开关 `SEED_SAMPLE_TRACES`。
+- `src/reader/sentenceAnchor.ts` — 句子与 Locator 的换算。阅读器渲染和持久层换算必须共用 `segmentChapter`，否则句子编号对不上。
+- `src/reader/trace.ts` — `Trace` / `NoteEntry` 视图模型与时间格式化。
+
+改动这几个文件时留意：`App.tsx` 里的痕迹状态是异步读回来的，测试需要 `waitFor`；每个测试用例换一个空 `IDBFactory`（见 `src/test/setup.ts`），不要让用例之间共用库。
 
 ## 后续待办
 
 - [x] 建立 `docs/DECISIONS.md`
 - [x] 补充核心领域对象与 EPUB 定位文档
 - [ ] 补充其余 `docs/` 与最小代码规范
-- [ ] 将真实 EPUB 接入 UI
+- [ ] 导入弹窗与 EPUB 封面提取
+- [ ] 阅读位置的保存与恢复（`ReadingProgress` + `Locator`）
+- [ ] 清掉示例书播种数据（`SEED_SAMPLE_TRACES`）
 - [ ] 明确第一版的非目标边界
 
 ## 当前阻塞
@@ -77,6 +89,9 @@
 - 2026-07-26：`npm test`（20 项通过）
 - 2026-07-26：`npm run lint`
 - 2026-07-26：`npm run build`
+- 2026-07-27：`npm test`（65 项通过，连续三次稳定绿）
+- 2026-07-27：`npm run build`、`npx oxlint`
+- 2026-07-27：手动确认刷新浏览器后划线与批注仍在
 
 ## 近期决定
 
@@ -98,6 +113,11 @@
 - 2026-07-26：EPUB 解析使用 JSZip 在浏览器本地完成，不依赖后端。
 - 2026-07-26：本地数据使用 IndexedDB 持久化，schema 包含 books、epubFiles、chapters、readingProgress、highlights、annotations、marginalia。
 - 2026-07-26：EPUB 解析失败时提示“这本书暂时无法打开”，右侧提供小箭头展开查看具体报错；点击空白处消失。
+- 2026-07-27：句子索引不进持久层。持久层只存 Locator，句子区间每次加载时由 `resolveLocator` 重新算出来。
+- 2026-07-27：痕迹的主键是 `passageKey`（章节 + 元素路径 + 偏移 + 原文），同一句子的划线与多条批注归到同一条痕迹。
+- 2026-07-27：原文已经找不回来的痕迹标记为 `drifted`，继续列在痕迹面板里但不提供跳转，不静默丢弃。
+- 2026-07-27：示例书《雨夜书房》的痕迹改为首次运行时播种进 IndexedDB，与导入的真书共用同一条读写路径；开关是 `SEED_SAMPLE_TRACES`。
+- 2026-07-27：痕迹时间戳严格递增（`nextTimestamp`），排序在 `createdAt` 相同时以 id 兜底，避免同毫秒写入的多条批注顺序不定。
 
 ## GitHub 操作说明
 
