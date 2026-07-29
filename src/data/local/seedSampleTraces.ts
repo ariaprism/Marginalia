@@ -1,6 +1,6 @@
 import { locatorFromSentenceRange, segmentChapters, type SegmentedChapter } from '../../reader/sentenceAnchor'
 import { sampleChapters } from '../../reader/bookContent'
-import { getAnnotations, getHighlights } from './bookStore'
+import { deleteBookCompletely, getAnnotations, getBook, getHighlights } from './bookStore'
 import { persistHighlight, persistNote, persistReply } from './traceStore'
 
 /**
@@ -11,11 +11,23 @@ import { persistHighlight, persistNote, persistReply } from './traceStore'
  * 数据库，删除和统计就得分两条路径走。所以首次启动时播种进 IndexedDB，
  * 之后示例书和你导入的真书走完全相同的读写路径。
  *
- * 不需要参照了就把 SEED_SAMPLE_TRACES 翻成 false，再清一次库，示例书就是一本空书。
+ * 不需要参照了就把 SEED_SAMPLE_TRACES 翻成 false，再定向清掉 rain-room 的痕迹，
+ * 示例书就是一本空书。不能清空整个 IndexedDB，否则用户导入书也会一起丢失。
  */
-export const SEED_SAMPLE_TRACES = true
+export const SEED_SAMPLE_TRACES = false
 
 export const SAMPLE_BOOK_ID = 'rain-room'
+
+/**
+ * 正式书架不再内置示例书后，清掉旧版本曾播种的孤儿数据。
+ *
+ * 旧示例书从未写入 books 表，因此只在不存在同 id 书籍时执行；自动测试显式装载的
+ * rain-room 测试书和任何真实入库记录都不会被误删。
+ */
+export async function cleanupLegacySampleData(): Promise<void> {
+  if (await getBook(SAMPLE_BOOK_ID)) return
+  await deleteBookCompletely(SAMPLE_BOOK_ID)
+}
 
 /**
  * 用原文定位，而不是句子序号：分段一变，写死的序号就会指到别的句子上。
@@ -73,8 +85,8 @@ function findSentenceRange(segmented: SegmentedChapter, quote: string) {
  * 幂等：只要库里已经有 rain-room 的划线或批注就直接返回，所以你在示例书上
  * 删掉的痕迹不会在刷新后复活。
  */
-export async function seedSampleTraces(): Promise<void> {
-  if (!SEED_SAMPLE_TRACES) return
+export async function seedSampleTraces(forceForTests = false): Promise<void> {
+  if (!SEED_SAMPLE_TRACES && !forceForTests) return
 
   const [highlights, annotations] = await Promise.all([
     getHighlights(SAMPLE_BOOK_ID),

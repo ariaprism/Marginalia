@@ -33,6 +33,25 @@ export async function getAllBooks(): Promise<Book[]> {
   return withTransaction('books', 'readonly', (store) => store.getAll())
 }
 
+export async function touchBook(bookId: string, now = new Date().toISOString()): Promise<Book | undefined> {
+  const db = await openMarginaliaDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('books', 'readwrite')
+    const store = transaction.objectStore('books')
+    const request = store.get(bookId)
+    let touched: Book | undefined
+    request.onsuccess = () => {
+      const book = request.result as Book | undefined
+      if (!book) return
+      touched = { ...book, lastOpenedAt: now, updatedAt: now }
+      store.put(touched)
+    }
+    transaction.oncomplete = () => resolve(touched)
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(transaction.error ?? new Error('记录最近打开时间的事务已中止'))
+  })
+}
+
 export async function saveEpubFile(bookId: string, file: Blob): Promise<void> {
   const record: StoredEpubFile = { bookId, file, addedAt: new Date().toISOString() }
   await withTransaction('epubFiles', 'readwrite', (store) => store.put(record))
@@ -72,6 +91,10 @@ export async function getReadingProgress(bookId: string): Promise<ReadingProgres
   return withTransaction('readingProgress', 'readonly', (store) => store.get(bookId))
 }
 
+export async function getAllReadingProgress(): Promise<ReadingProgress[]> {
+  return withTransaction('readingProgress', 'readonly', (store) => store.getAll())
+}
+
 export async function saveHighlight(highlight: Highlight): Promise<void> {
   await withTransaction('highlights', 'readwrite', (store) => store.put(highlight))
 }
@@ -106,4 +129,46 @@ export async function getMarginalia(bookId: string): Promise<Marginalia[]> {
 
 export async function deleteMarginalia(id: string): Promise<void> {
   await withTransaction('marginalia', 'readwrite', (store) => store.delete(id))
+}
+
+function deleteByBookIndex(store: IDBObjectStore, bookId: string) {
+  const request = store.index('bookId').openCursor(IDBKeyRange.only(bookId))
+  request.onsuccess = () => {
+    const cursor = request.result
+    if (!cursor) return
+    cursor.delete()
+    cursor.continue()
+  }
+}
+
+/**
+ * 完整移出一本书。
+ *
+ * 所有删除放在同一个事务中：任何一步失败，书籍、EPUB、章节和痕迹会一起回滚，
+ * 不会留下只有批注没有正文的孤儿记录。
+ */
+export async function deleteBookCompletely(bookId: string): Promise<void> {
+  const db = await openMarginaliaDB()
+  const storeNames = [
+    'books',
+    'epubFiles',
+    'chapters',
+    'readingProgress',
+    'highlights',
+    'annotations',
+    'marginalia',
+  ]
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(storeNames, 'readwrite')
+    transaction.objectStore('books').delete(bookId)
+    transaction.objectStore('epubFiles').delete(bookId)
+    transaction.objectStore('readingProgress').delete(bookId)
+    deleteByBookIndex(transaction.objectStore('chapters'), bookId)
+    deleteByBookIndex(transaction.objectStore('highlights'), bookId)
+    deleteByBookIndex(transaction.objectStore('annotations'), bookId)
+    deleteByBookIndex(transaction.objectStore('marginalia'), bookId)
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(transaction.error ?? new Error('删除书籍事务已中止'))
+  })
 }

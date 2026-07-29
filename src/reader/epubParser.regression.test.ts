@@ -28,6 +28,55 @@ async function buildEpub(files: Record<string, string>): Promise<Uint8Array> {
 }
 
 describe('epubParser · 现实世界 EPUB 变体', () => {
+  it('extracts an EPUB 3 cover-image from the manifest', async () => {
+    const bytes = await buildEpub({
+      'OEBPS/content.opf': `<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:test:cover3</dc:identifier>
+    <dc:title>带封面的书</dc:title>
+    <dc:language>zh</dc:language>
+  </metadata>
+  <manifest>
+    <item id="cover-image" href="images/front.png" media-type="image/png" properties="cover-image"/>
+    <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="c1"/></spine>
+</package>`,
+      'OEBPS/images/front.png': 'epub-three-cover',
+      'OEBPS/c1.xhtml': chapterXhtml('正文', '<p>正文。</p>'),
+    })
+
+    const epub = await parseEpub(bytes)
+    expect(epub.cover?.mediaType).toBe('image/png')
+    expect(new TextDecoder().decode(epub.cover!.bytes)).toBe('epub-three-cover')
+  })
+
+  it('extracts an EPUB 2 cover referenced by metadata', async () => {
+    const bytes = await buildEpub({
+      'OEBPS/content.opf': `<?xml version="1.0" encoding="UTF-8"?>
+<package version="2.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:test:cover2</dc:identifier>
+    <dc:title>旧版封面的书</dc:title>
+    <dc:language>zh</dc:language>
+    <meta name="cover" content="front"/>
+  </metadata>
+  <manifest>
+    <item id="front" href="front.jpg" media-type="image/jpeg"/>
+    <item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="c1"/></spine>
+</package>`,
+      'OEBPS/front.jpg': 'epub-two-cover',
+      'OEBPS/c1.xhtml': chapterXhtml('正文', '<p>正文。</p>'),
+    })
+
+    const epub = await parseEpub(bytes)
+    expect(epub.cover?.mediaType).toBe('image/jpeg')
+    expect(new TextDecoder().decode(epub.cover!.bytes)).toBe('epub-two-cover')
+  })
+
   it('manifest 里 href 写在 id 之前也能解析出章节', async () => {
     // 旧实现的正则要求 id 必须在 href 之前，这类文件会静默丢掉全部章节。
     const bytes = await buildEpub({

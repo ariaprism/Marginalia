@@ -15,4 +15,5 @@ afterEach(cleanup)
  */
 afterEach(() => {
   globalThis.indexedDB = new IDBFactory()
+  window.localStorage.clear()
 })

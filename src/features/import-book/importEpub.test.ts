@@ -1,6 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest'
-import { importEpubFile } from './importEpub'
+import { getBook } from '../../data/local/bookStore'
 import { buildRainRoomEpub } from '../../reader/fixtures/rain-room-epub'
+import { importEpubFile, prepareEpubFile, savePreparedEpub } from './importEpub'
 
 async function epubFile(name = '雨夜书房.epub') {
   const bytes = await buildRainRoomEpub()
@@ -19,6 +20,31 @@ describe('importEpubFile', () => {
 
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.bookId).toBeTruthy()
+  })
+
+  it('saves edited metadata only after the prepared import is confirmed', async () => {
+    const preparedResult = await prepareEpubFile(await epubFile())
+    expect(preparedResult.ok).toBe(true)
+    if (!preparedResult.ok) return
+
+    const result = await savePreparedEpub(preparedResult.prepared, {
+      title: '改过的书名',
+      englishTitle: 'A Quiet Alternate Title',
+      author: '改过的作者',
+      description: '改过的简介',
+      coverTone: 'green',
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const stored = await getBook(result.bookId)
+    expect(stored).toMatchObject({
+      title: '改过的书名',
+      englishTitle: 'A Quiet Alternate Title',
+      author: '改过的作者',
+      description: '改过的简介',
+      coverTone: 'green',
+    })
   })
 
   /**

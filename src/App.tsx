@@ -1,17 +1,23 @@
 import {
   ArrowLeft,
   BarChart3,
+  Bookmark,
   BookOpenText,
   Check,
   ChevronRight,
   Copy,
   CornerUpLeft,
   Highlighter,
+  ImagePlus,
   ListTree,
   MessageSquareText,
+  MoreHorizontal,
+  Plus,
+  SquarePen,
   SunMoon,
   Type,
   Upload,
+  Trash2,
   X,
 } from 'lucide-react'
 import {
@@ -22,7 +28,13 @@ import {
   useRef,
   useState,
 } from 'react'
-import { seedSampleTraces } from './data/local/seedSampleTraces'
+import {
+  deleteBookCompletely,
+  getAllReadingProgress,
+  getReadingProgress,
+  saveReadingProgress,
+  touchBook,
+} from './data/local/bookStore'
 import {
   loadTraces,
   passageKey,
@@ -31,11 +43,29 @@ import {
   removeHighlight,
   removeNote as deleteNoteRecord,
 } from './data/local/traceStore'
+import { cleanupLegacySampleData } from './data/local/seedSampleTraces'
 import type { Locator } from './domain/locator'
+import type { BookCoverTone } from './domain/book'
+import {
+  createReadingProgress,
+  moveReadingBookmark,
+  removeReadingBookmark,
+  type ReadingProgress,
+} from './domain/readingProgress'
 import { useBooks } from './features/bookshelf/useBooks'
-import { importEpubFile } from './features/import-book/importEpub'
-import { loadBookChapters, sampleChapters, type ChapterText } from './reader/bookContent'
-import { locatorFromSentenceRange, segmentChapters } from './reader/sentenceAnchor'
+import { coverTitleLines } from './features/bookshelf/coverTitle'
+import {
+  imageFileToDataUrl,
+  prepareEpubFile,
+  savePreparedEpub,
+  type PreparedEpubImport,
+} from './features/import-book/importEpub'
+import { loadBookChapters, type ChapterText } from './reader/bookContent'
+import {
+  locatorFromSentenceRange,
+  resolveLocator,
+  segmentChapters,
+} from './reader/sentenceAnchor'
 import type { NoteEntry, Trace } from './reader/trace'
 import './App.css'
 
@@ -58,65 +88,127 @@ type Book = {
   description: string
   quote: string
   lastChapter?: string
-  tone: string
+  tone: BookCoverTone
+  coverUrl?: string
+  lastOpenedAt?: string
+}
+
+type ImportDraft = {
+  title: string
+  englishTitle: string
+  author: string
+  description: string
+  tone: BookCoverTone
+  coverUrl?: string
 }
 
 type ReflowAnchor = { chapterIndex: number; ratio: number }
 type SentenceSelection = { chapterIndex: number; start: number; end: number }
 type BubblePosition = { left: number; top: number; placement: 'above' | 'below' }
+type PageAnchor = SentenceSelection
+type LastView = { screen: Screen; bookId?: string }
+type CompanionPronoun = '她' | '他' | 'TA' | 'name'
+type CallingCard = {
+  userName: string
+  companionName: string
+  companionPronoun: CompanionPronoun
+}
 
-const books: Book[] = [
-  {
-    id: 'rain-room',
-    title: '雨夜书房',
-    englishTitle: 'The Library After Rain',
-    author: '小G · 著',
-    status: 'reading',
-    statusLabel: '在读',
-    progress: 38,
-    description: '一座只在雨夜出现的旧书房，替迟迟没有说出口的人，保存那些被折起来的句子。',
-    quote: '灯亮起来以前，书房先听见了雨。',
-    lastChapter: '第一章',
-    tone: 'rose',
-  },
-  {
-    id: 'bottle-museum',
-    title: '漂流瓶博物馆',
-    englishTitle: 'Museum of Unsent Letters',
-    author: '林渡 · 著',
-    status: 'wish',
-    statusLabel: '想读',
-    progress: 0,
-    description: '海边有一间博物馆，只收藏从未抵达收信人手里的信。',
-    quote: '每一封没有寄出的信，都曾经抵达过写信的人。',
-    tone: 'blue',
-  },
-  {
-    id: 'winter-greenhouse',
-    title: '玻璃温室里的冬天',
-    englishTitle: 'Winter in the Glasshouse',
-    author: '周悬 · 著',
-    status: 'finished',
-    statusLabel: '已读完',
-    progress: 100,
-    description: '两个替植物记录体温的人，在漫长冬季里交换各自的天气。',
-    quote: '我们并没有等到春天，只是学会了辨认更轻的绿色。',
-    lastChapter: '尾声',
-    tone: 'green',
-  },
-  {
-    id: 'light-index',
-    title: '光的索引',
-    englishTitle: 'An Index of Light',
-    author: 'Mira Vale · 著',
-    status: 'wish',
-    statusLabel: '想读',
-    progress: 0,
-    description: '一本记录清晨、黄昏和旧窗户的私人词典。',
-    quote: 'Light remembers every room differently.',
-    tone: 'ochre',
-  },
+const LAST_VIEW_KEY = 'marginalia:last-view'
+const BOOK_RECENCY_KEY = 'marginalia:book-recency'
+const CALLING_CARD_KEY = 'marginalia:calling-card'
+const DEFAULT_CALLING_CARD: CallingCard = {
+  userName: '小狐狸',
+  companionName: '小鱼',
+  companionPronoun: '她',
+}
+const EMPTY_IMPORT_DRAFT: ImportDraft = {
+  title: '',
+  englishTitle: '',
+  author: '',
+  description: '',
+  tone: 'rose',
+}
+const COVER_TONES: { id: BookCoverTone; label: string }[] = [
+  { id: 'rose', label: '棕红' },
+  { id: 'blue', label: '雾蓝' },
+  { id: 'green', label: '苔绿' },
+  { id: 'ochre', label: '赭黄' },
 ]
+
+function readLastView(): LastView {
+  try {
+    const raw = window.localStorage.getItem(LAST_VIEW_KEY)
+    if (!raw) return { screen: 'shelf' }
+    const parsed = JSON.parse(raw) as LastView
+    return parsed.screen === 'reader' || parsed.screen === 'room'
+      ? parsed
+      : { screen: 'shelf' }
+  } catch {
+    return { screen: 'shelf' }
+  }
+}
+
+function writeLastView(view: LastView) {
+  try {
+    window.localStorage.setItem(LAST_VIEW_KEY, JSON.stringify(view))
+  } catch {
+    // 隐私模式或存储被禁用时，阅读位置仍由 IndexedDB 保存；只是不恢复界面层。
+  }
+}
+
+function readBookRecency(): Record<string, string> {
+  try {
+    return JSON.parse(window.localStorage.getItem(BOOK_RECENCY_KEY) ?? '{}') as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
+function writeBookRecency(recency: Record<string, string>) {
+  try {
+    window.localStorage.setItem(BOOK_RECENCY_KEY, JSON.stringify(recency))
+  } catch {
+    // 排序偏好写不进去时不影响书籍本身。
+  }
+}
+
+function readCallingCard(): CallingCard {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(CALLING_CARD_KEY) ?? '{}') as Partial<CallingCard>
+    const pronoun = stored.companionPronoun
+    return {
+      userName: stored.userName ?? DEFAULT_CALLING_CARD.userName,
+      companionName: stored.companionName ?? DEFAULT_CALLING_CARD.companionName,
+      companionPronoun: pronoun === '她' || pronoun === '他' || pronoun === 'TA' || pronoun === 'name'
+        ? pronoun
+        : DEFAULT_CALLING_CARD.companionPronoun,
+    }
+  } catch {
+    return DEFAULT_CALLING_CARD
+  }
+}
+
+function writeCallingCard(card: CallingCard) {
+  try {
+    window.localStorage.setItem(CALLING_CARD_KEY, JSON.stringify(card))
+  } catch {
+    // 称呼属于轻量界面设置；存储受限时仅保留到本次打开。
+  }
+}
+
+const EMPTY_ROOM_BOOK: Book = {
+  id: '',
+  title: '',
+  englishTitle: '',
+  author: '',
+  status: 'reading',
+  statusLabel: '在读',
+  progress: 0,
+  description: '',
+  quote: '',
+  tone: 'rose',
+}
 
 function traceLineClass(trace: Trace) {
   if (trace.highlighted) return 'trace-line-highlight'
@@ -136,27 +228,31 @@ function ChapterTraceMark() {
     <svg className="chapter-trace-mark" viewBox="0 0 24 24" aria-hidden="true">
       <path d="M6.1 2.8c3.6.2 7.3-.2 11.1 0 .9 0 1.5.6 1.5 1.5-.2 5.1.2 10.2 0 15.4 0 .9-.6 1.5-1.5 1.5-3.7-.2-7.4.2-11.1 0-.9 0-1.5-.6-1.5-1.5.2-5.2-.2-10.3 0-15.4 0-.9.6-1.5 1.5-1.5Z" />
       <path d="M7.7 7.1c2.1-.3 4.1.3 6.4-.1M7.5 10.5c3 .4 5.3-.4 8.8.1M7.8 13.8c1.7-.2 3.1.3 4.8 0" />
-      <circle className="trace-dot" cx="15.9" cy="15.6" r=".75" />
-      <circle className="trace-dot" cx="9.1" cy="17.7" r=".55" />
     </svg>
   )
 }
 
 function catalogueIndexFor(book: Book) {
-  const sampleIndex = books.findIndex((item) => item.id === book.id)
-  if (sampleIndex >= 0) return sampleIndex + 1
   let hash = 0
   for (const char of book.id) hash = (hash * 31 + char.charCodeAt(0)) % 89
-  return books.length + 1 + hash
+  return 1 + hash
 }
 
 function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
   const catalogueNumber = String(catalogueIndexFor(book)).padStart(2, '0')
+  const titleLines = coverTitleLines(book.title)
+  const widestLine = Math.max(...titleLines.map((line) => Array.from(line).length))
   return (
-    <span className={`book-cover cover-${book.tone} ${large ? 'is-large' : ''}`} aria-hidden="true">
-      <span className="cover-index">MARGINALIA · {catalogueNumber}</span>
-      <span className="cover-title">{book.title}</span>
-      <span className="cover-english">{book.englishTitle}</span>
+    <span className={`book-cover cover-${book.tone} ${book.coverUrl ? 'has-image' : ''} ${large ? 'is-large' : ''}`} aria-hidden="true">
+      {book.coverUrl
+        ? <img className="cover-image" src={book.coverUrl} alt="" />
+        : <>
+            <span className="cover-index">MARGINALIA · {catalogueNumber}</span>
+            <span className={`cover-title ${widestLine > 3 ? 'has-wide-line' : ''}`}>
+              {titleLines.map((line, index) => <span className="cover-title-line" key={`${index}-${line}`}>{line}</span>)}
+            </span>
+            <span className="cover-english">{book.englishTitle}</span>
+          </>}
     </span>
   )
 }
@@ -168,69 +264,132 @@ function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
  * iOS Safari 只信任落在 input 自身上的用户手势，JS 转发的点击会被静默忽略，
  * 表现就是手机上点「藏入一本书」毫无反应。
  */
-function ImportBookControl({ onFileChange }: { onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void }) {
+function ImportBookControl({ onOpen }: { onOpen: () => void }) {
   return (
-    <label className="import-book">
-      <Upload size={18} strokeWidth={1.5} aria-hidden="true" />
-      <span>藏入一本书</span>
-      <input
-        type="file"
-        accept=".epub,application/epub+zip"
-        className="import-book-input"
-        onChange={onFileChange}
-      />
-    </label>
+    <button className="import-book" type="button" onClick={onOpen}>
+      <Plus size={18} strokeWidth={1.5} aria-hidden="true" />
+      <span>藏入书籍</span>
+    </button>
   )
 }
 
-function BrandHeader({ onBack, shelfView, onToggleView, onFileChange }: { onBack?: () => void; shelfView?: ShelfView; onToggleView?: () => void; onFileChange?: (event: React.ChangeEvent<HTMLInputElement>) => void }) {
+function BrandHeader({
+  onBack,
+  shelfView,
+  onToggleView,
+  onOpenSidebar,
+  onOpenImport,
+  onOpenBookMenu,
+  bookMenuOpen,
+}: {
+  onBack?: () => void
+  shelfView?: ShelfView
+  onToggleView?: () => void
+  onOpenSidebar?: () => void
+  onOpenImport?: () => void
+  onOpenBookMenu?: () => void
+  bookMenuOpen?: boolean
+}) {
   if (onBack) {
     return (
       <header className="shelf-header room-header">
         <button className="room-back-link" type="button" onClick={onBack} aria-label="返回书架">
           <span className="room-back"><ArrowLeft /></span><small>BACK TO BOOKSHELF</small>
         </button>
+        {onOpenBookMenu && (
+          <button className="room-menu-button" type="button" onClick={onOpenBookMenu} aria-label="管理这本书" aria-expanded={bookMenuOpen}>
+            <MoreHorizontal />
+          </button>
+        )}
       </header>
     )
   }
 
   return (
     <header className="shelf-header">
-      <button
-        className="brand-lockup brand-toggle"
-        type="button"
-        onClick={onToggleView}
-        aria-label={shelfView === 'covers' ? '切换为列表书架' : '切换为封面书架'}
-        title={shelfView === 'covers' ? '切换为列表书架' : '切换为封面书架'}
-      >
-        <span className="brand-flourish" aria-hidden="true">
-          <span className="seal-curve seal-curve-outer" />
-          <span className="seal-curve seal-curve-inner" />
-          <i>M</i>
-        </span>
-        <div><p className="brand-name">Marginalia</p><p className="brand-subtitle">在正文之外，我们相遇。</p></div>
-      </button>
-      {onFileChange && <ImportBookControl onFileChange={onFileChange} />}
+      <div className="brand-lockup">
+        <button className="brand-seal-button" type="button" onClick={onOpenSidebar} aria-label="打开侧边栏" title="打开侧边栏">
+          <span className="brand-flourish" aria-hidden="true">
+            <span className="seal-curve seal-curve-outer" />
+            <span className="seal-curve seal-curve-inner" />
+            <i>M</i>
+          </span>
+        </button>
+        <div className="brand-copy">
+          <button
+            className="brand-title-toggle"
+            type="button"
+            onClick={onToggleView}
+            aria-label={shelfView === 'covers' ? '切换为列表书架' : '切换为封面书架'}
+            title={shelfView === 'covers' ? '切换为列表书架' : '切换为封面书架'}
+          >
+            <span className="brand-name">Marginalia</span>
+          </button>
+          <p className="brand-subtitle">在正文之外，我们相遇。</p>
+        </div>
+      </div>
+      {onOpenImport && <ImportBookControl onOpen={onOpenImport} />}
     </header>
   )
 }
 
+async function copyTextToClipboard(text: string) {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // 权限策略或浏览器实现仍可能拒绝，继续走同步兼容路径。
+    }
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.readOnly = true
+  textarea.setAttribute('aria-hidden', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.inset = '0 auto auto -9999px'
+  textarea.style.opacity = '0'
+  document.body.append(textarea)
+  textarea.focus({ preventScroll: true })
+  textarea.select()
+  textarea.setSelectionRange(0, text.length)
+
+  let copied = false
+  try {
+    copied = typeof document.execCommand === 'function' && document.execCommand('copy')
+  } catch {
+    copied = false
+  }
+  textarea.remove()
+  return copied
+}
+
 function App() {
+  const initialViewRef = useRef<LastView>(readLastView())
+  const [lastViewRestored, setLastViewRestored] = useState(false)
   const [screen, setScreen] = useState<Screen>('shelf')
   const [shelfView, setShelfView] = useState<ShelfView>('list')
-  const [roomBook, setRoomBook] = useState<Book>(books[0])
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [callingCard, setCallingCard] = useState<CallingCard>(readCallingCard)
+  const [bookRecency, setBookRecency] = useState<Record<string, string>>(readBookRecency)
+  const [removedBookIds, setRemovedBookIds] = useState<Set<string>>(() => new Set())
+  const [roomBook, setRoomBook] = useState<Book>(EMPTY_ROOM_BOOK)
+  const [roomMenuOpen, setRoomMenuOpen] = useState(false)
+  const [deleteBookDialogOpen, setDeleteBookDialogOpen] = useState(false)
+  const [deletingBook, setDeletingBook] = useState(false)
   const [filter, setFilter] = useState<ShelfFilter>('all')
-  const [readerChapters, setReaderChapters] = useState<ChapterText[]>(sampleChapters)
+  const [readerChapters, setReaderChapters] = useState<ChapterText[]>([])
   const [readerChaptersReady, setReaderChaptersReady] = useState(true)
   const [pageIndex, setPageIndex] = useState(0)
-  const [totalPages, setTotalPages] = useState(sampleChapters.length)
-  const [chapterStarts, setChapterStarts] = useState(sampleChapters.map((_, index) => index))
+  const [totalPages, setTotalPages] = useState(1)
+  const [chapterStarts, setChapterStarts] = useState<number[]>([])
   const [chromeVisible, setChromeVisible] = useState(false)
   const [panel, setPanel] = useState<ReaderPanel>(null)
   const [theme, setTheme] = useState<ReaderTheme>('day')
   const [fontSize, setFontSize] = useState(19)
-  const [lineHeight, setLineHeight] = useState(1.95)
-  const [pageMargin, setPageMargin] = useState(12)
+  const [lineHeight, setLineHeight] = useState(1.8)
+  const [pageMargin, setPageMargin] = useState(8)
   const [readerTypeface, setReaderTypeface] = useState<ReaderTypeface>('serif')
   const [selectedText, setSelectedText] = useState('')
   const [sentenceSelection, setSentenceSelection] = useState<SentenceSelection | null>(null)
@@ -246,41 +405,104 @@ function App() {
   const [activeTrace, setActiveTrace] = useState<Trace | null>(null)
   const [returnPage, setReturnPage] = useState<number | null>(null)
   const [pendingChapter, setPendingChapter] = useState<number | null>(null)
+  const [pendingLocator, setPendingLocator] = useState<Locator | null>(null)
+  const [readerPositionReady, setReaderPositionReady] = useState(false)
+  const [activeProgress, setActiveProgress] = useState<ReadingProgress | null>(null)
+  const [progressByBook, setProgressByBook] = useState<Record<string, ReadingProgress>>({})
+  const [bookmarkPage, setBookmarkPage] = useState<number | null>(null)
+  const [bookmarkMenuOpen, setBookmarkMenuOpen] = useState(false)
+  const [bookmarkReminderVisible, setBookmarkReminderVisible] = useState(false)
   const [descriptionOpen, setDescriptionOpen] = useState(false)
   const [toast, setToast] = useState<{ message: string; details?: string } | null>(null)
   const [importKey, setImportKey] = useState(0)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [importParsing, setImportParsing] = useState(false)
+  const [importSaving, setImportSaving] = useState(false)
+  const [preparedImport, setPreparedImport] = useState<PreparedEpubImport | null>(null)
+  const [importDraft, setImportDraft] = useState<ImportDraft>(EMPTY_IMPORT_DRAFT)
 
   const viewportRef = useRef<HTMLDivElement>(null)
   const flowRef = useRef<HTMLDivElement>(null)
   const reflowAnchorRef = useRef<ReflowAnchor | null>(null)
+  const pageAnchorsRef = useRef<(PageAnchor | null)[]>([])
+  const sentencePagesRef = useRef(new Map<string, number>())
+  const resumeEligibleRef = useRef(true)
+  const activeProgressRef = useRef<ReadingProgress | null>(null)
+  const progressWriteRef = useRef(Promise.resolve())
+  const bookTouchWriteRef = useRef(Promise.resolve())
+  const importSessionRef = useRef(0)
+  const bookRecencyClockRef = useRef(Math.max(
+    0,
+    ...Object.values(bookRecency).map((timestamp) => Date.parse(timestamp) || 0),
+  ))
   /** 渲染期同步，供异步读取回来时判断「现在还在这本书上吗」。 */
   const currentBookIdRef = useRef(roomBook.id)
   currentBookIdRef.current = roomBook.id
+
+  const userLabel = callingCard.userName.trim() || '我'
+  const companionLabel = callingCard.companionName.trim() || '共读者'
+  const companionSubject = callingCard.companionPronoun === 'name'
+    ? companionLabel
+    : callingCard.companionPronoun
 
   const booksState = useBooks(importKey)
 
   const segmentedChapters = useMemo(() => segmentChapters(readerChapters), [readerChapters])
 
+  useEffect(() => {
+    let cancelled = false
+    cleanupLegacySampleData().catch((error) => console.error('清理旧示例痕迹失败', error))
+    getAllReadingProgress()
+      .then((records) => {
+        if (cancelled) return
+        setProgressByBook(Object.fromEntries(records.map((record) => [record.bookId, record])))
+      })
+      .catch((error) => console.error('读取阅读位置失败', error))
+    return () => { cancelled = true }
+  }, [])
+
   const loadedBooks: Book[] = useMemo(() => {
     if (booksState.status !== 'ready') return []
-    return booksState.books.map((domainBook) => ({
+    return booksState.books
+      .filter((domainBook) => !removedBookIds.has(domainBook.id))
+      .map((domainBook) => ({
       id: domainBook.id,
       title: domainBook.title,
-      englishTitle: '',
+      englishTitle: domainBook.englishTitle ?? '',
       author: domainBook.author,
       status: domainBook.status as BookStatus,
       statusLabel: domainBook.status === 'reading' ? '在读' : domainBook.status === 'wish' ? '想读' : '已读完',
       progress: domainBook.progress,
       description: domainBook.description ?? '',
       quote: '',
-      tone: 'rose' as const,
+      tone: domainBook.coverTone ?? 'rose',
+      coverUrl: domainBook.coverUrl,
+      lastOpenedAt: domainBook.lastOpenedAt,
     }))
-  }, [booksState])
+  }, [booksState, removedBookIds])
 
-  const shelfBooks: Book[] = useMemo(() => [...books, ...loadedBooks], [loadedBooks])
+  const shelfBooks: Book[] = useMemo(() => loadedBooks
+    .map((book) => {
+      const progress = progressByBook[book.id]
+      if (!progress) return book
+      return {
+        ...book,
+        progress: progress.totalProgress,
+        lastChapter: `第 ${progress.locator.position.chapterIndex + 1} 章`,
+        quote: progress.locator.position.selectedText,
+      }
+    })
+    .sort((a, b) => {
+      const aOpened = bookRecency[a.id] ?? a.lastOpenedAt
+      const bOpened = bookRecency[b.id] ?? b.lastOpenedAt
+      if (aOpened === bOpened) return 0
+      if (!aOpened) return 1
+      if (!bOpened) return -1
+      return bOpened.localeCompare(aOpened)
+    }), [bookRecency, loadedBooks, progressByBook])
 
   const openableBookIds = useMemo(
-    () => new Set(['rain-room', ...loadedBooks.map((book) => book.id)]),
+    () => new Set(loadedBooks.map((book) => book.id)),
     [loadedBooks],
   )
 
@@ -315,17 +537,12 @@ function App() {
     if (currentBookIdRef.current === bookId) setTraces(loaded)
   }, [readerChapters, roomBook.id, segmentedChapters])
 
-  /** 播种只跑一次，且必须排在第一次读取之前，否则示例书第一眼是空的。 */
-  const seededRef = useRef<Promise<void> | null>(null)
-
   useEffect(() => {
     // 章节还在加载时 readerChapters 仍是上一本书的，这时候读出来的句子区间会锚到
     // 错的正文上。等 ready 再读，界面上只是痕迹晚一帧出现。
     if (!readerChaptersReady) return
     let cancelled = false
-    seededRef.current ??= seedSampleTraces()
-    seededRef.current
-      .then(() => { if (!cancelled) return refreshTraces() })
+    refreshTraces()
       .catch((error) => { if (!cancelled) console.error('读取痕迹失败', error) })
     return () => { cancelled = true }
   }, [readerChaptersReady, refreshTraces])
@@ -347,6 +564,76 @@ function App() {
     chapterStarts.forEach((start, index) => { if (start <= pageIndex) active = index })
     return active
   }, [chapterStarts, pageIndex])
+
+  const adoptActiveProgress = useCallback((progress: ReadingProgress | null) => {
+    activeProgressRef.current = progress
+    setActiveProgress(progress)
+    if (progress) {
+      setProgressByBook((current) => ({ ...current, [progress.bookId]: progress }))
+    }
+  }, [])
+
+  const chapterIndexForPage = useCallback((targetPage: number) => {
+    let chapterIndex = 0
+    chapterStarts.forEach((start, index) => {
+      if (start <= targetPage) chapterIndex = index
+    })
+    return chapterIndex
+  }, [chapterStarts])
+
+  const locatorForPage = useCallback((targetPage: number): Locator | null => {
+    const mapped = pageAnchorsRef.current[targetPage]
+    if (mapped) return locatorForSelection(mapped)
+
+    // jsdom 与极少数尚未完成布局的浏览器拿不到 DOM rect；退到本章第一句，
+    // 仍然保存稳定 Locator，不能退回动态页码。
+    const chapterIndex = chapterIndexForPage(targetPage)
+    const first = segmentedChapters[chapterIndex]?.sentences[0]
+    return first ? locatorForSelection({ chapterIndex, start: first.index, end: first.index }) : null
+  }, [chapterIndexForPage, locatorForSelection, segmentedChapters])
+
+  const pageForLocator = useCallback((locator: Locator): number | null => {
+    const resolved = resolveLocator(
+      locator.position,
+      segmentedChapters,
+      readerChapters.map((chapter) => chapter.paragraphs),
+    )
+    if (!resolved) return null
+    return sentencePagesRef.current.get(`${resolved.chapterIndex}:${resolved.start}`)
+      ?? chapterStarts[resolved.chapterIndex]
+      ?? null
+  }, [chapterStarts, readerChapters, segmentedChapters])
+
+  const writeProgress = useCallback((progress: ReadingProgress) => {
+    adoptActiveProgress(progress)
+    progressWriteRef.current = progressWriteRef.current
+      .catch(() => undefined)
+      .then(() => saveReadingProgress(progress))
+      .catch((error) => { console.error('保存阅读位置失败', error) })
+  }, [adoptActiveProgress])
+
+  const saveResumeLocator = useCallback((locator: Locator, targetPage = pageIndex) => {
+    const now = new Date().toISOString()
+    const chapterIndex = chapterIndexForPage(targetPage)
+    const chapterStart = chapterStarts[chapterIndex] ?? 0
+    const chapterEnd = chapterStarts[chapterIndex + 1] ?? totalPages
+    const chapterLength = Math.max(1, chapterEnd - chapterStart)
+    const chapterProgress = Math.round(((targetPage - chapterStart + 1) / chapterLength) * 100)
+    const totalProgress = Math.round(((targetPage + 1) / Math.max(1, totalPages)) * 100)
+    const existing = activeProgressRef.current?.bookId === roomBook.id
+      ? activeProgressRef.current
+      : null
+    const next = existing
+      ? { ...existing, locator, chapterProgress, totalProgress, updatedAt: now }
+      : createReadingProgress(roomBook.id, locator, chapterProgress, totalProgress, now)
+    writeProgress(next)
+  }, [chapterIndexForPage, chapterStarts, pageIndex, roomBook.id, totalPages, writeProgress])
+
+  const saveCurrentPagePosition = useCallback(() => {
+    if (!readerPositionReady || !resumeEligibleRef.current) return
+    const locator = locatorForPage(pageIndex)
+    if (locator) saveResumeLocator(locator, pageIndex)
+  }, [locatorForPage, pageIndex, readerPositionReady, saveResumeLocator])
 
   const selectedRangeTrace = useMemo(() => {
     if (!sentenceSelection) return undefined
@@ -373,16 +660,116 @@ function App() {
 
   const clearToast = () => setToast(null)
 
+  const updateCallingCard = (patch: Partial<CallingCard>) => {
+    setCallingCard((current) => {
+      const next = { ...current, ...patch }
+      writeCallingCard(next)
+      return next
+    })
+  }
+
+  const rememberBookOpened = (book: Book) => {
+    bookRecencyClockRef.current = Math.max(Date.now(), bookRecencyClockRef.current + 1)
+    const openedAt = new Date(bookRecencyClockRef.current).toISOString()
+    setBookRecency((current) => {
+      const next = { ...current, [book.id]: openedAt }
+      writeBookRecency(next)
+      return next
+    })
+    bookTouchWriteRef.current = bookTouchWriteRef.current
+      .then(() => touchBook(book.id, openedAt))
+      .then(() => undefined)
+      .catch((error) => console.error('记录最近打开书籍失败', error))
+  }
+
+  const openImportDialog = () => {
+    importSessionRef.current += 1
+    setPreparedImport(null)
+    setImportDraft(EMPTY_IMPORT_DRAFT)
+    setImportParsing(false)
+    setImportSaving(false)
+    setImportDialogOpen(true)
+  }
+
+  const closeImportDialog = () => {
+    if (importSaving) return
+    importSessionRef.current += 1
+    setImportDialogOpen(false)
+    setPreparedImport(null)
+    setImportDraft(EMPTY_IMPORT_DRAFT)
+    setImportParsing(false)
+  }
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
+    const session = importSessionRef.current + 1
+    importSessionRef.current = session
+    setImportParsing(true)
+    setPreparedImport(null)
 
-    // 兜底 catch 不能省：importEpubFile 里任何未预料的异常如果冒出去，
-    // 表现是「选完文件回到书架、既没提示也没有书」，在手机上完全无从排查。
     try {
-      const result = await importEpubFile(file)
+      const result = await prepareEpubFile(file)
+      if (importSessionRef.current !== session) return
       if (result.ok) {
+        const { prepared } = result
+        setPreparedImport(prepared)
+        setImportDraft({
+          title: prepared.metadata.title || file.name.replace(/\.epub$/i, ''),
+          englishTitle: '',
+          author: prepared.metadata.author || '',
+          description: prepared.metadata.description ?? '',
+          tone: 'rose',
+          coverUrl: prepared.embeddedCoverUrl,
+        })
+      } else {
+        showToast(result.message, result.details)
+      }
+    } catch (error) {
+      showToast('这本书暂时无法打开', error instanceof Error ? error.message : String(error))
+    } finally {
+      if (importSessionRef.current === session) setImportParsing(false)
+    }
+  }
+
+  const handleCoverFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      showToast('请选择一张图片作为封面。')
+      return
+    }
+    try {
+      const coverUrl = await imageFileToDataUrl(file)
+      setImportDraft((draft) => ({ ...draft, coverUrl }))
+    } catch (error) {
+      showToast('这张封面暂时无法使用', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const chooseGeneratedCover = (tone: BookCoverTone) => {
+    setImportDraft((draft) => ({ ...draft, tone, coverUrl: undefined }))
+  }
+
+  const saveImport = async () => {
+    if (!preparedImport || !importDraft.title.trim() || importSaving) return
+    setImportSaving(true)
+    try {
+      const result = await savePreparedEpub(preparedImport, {
+        title: importDraft.title,
+        englishTitle: importDraft.englishTitle,
+        author: importDraft.author,
+        description: importDraft.description,
+        coverUrl: importDraft.coverUrl,
+        coverTone: importDraft.tone,
+      })
+      if (result.ok) {
+        importSessionRef.current += 1
+        setImportDialogOpen(false)
+        setPreparedImport(null)
+        setImportDraft(EMPTY_IMPORT_DRAFT)
         setImportKey((key) => key + 1)
         showToast('已经藏入书架。')
       } else {
@@ -390,6 +777,8 @@ function App() {
       }
     } catch (error) {
       showToast('这本书暂时无法打开', error instanceof Error ? error.message : String(error))
+    } finally {
+      setImportSaving(false)
     }
   }
 
@@ -398,6 +787,25 @@ function App() {
     setShelfView(next)
     showToast(next === 'covers' ? '已切换为封面书架。' : '已切换为列表书架。')
   }
+
+  const copySelection = async () => {
+    const copied = await copyTextToClipboard(selectedText)
+    if (copied) {
+      showToast('已复制。')
+      clearSelection()
+    } else {
+      showToast('摘录没有进入剪贴板，请再试一次。')
+    }
+  }
+
+  useEffect(() => {
+    if (!sidebarOpen) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidebarOpen(false)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [sidebarOpen])
 
   const recalculatePagination = useCallback(() => {
     const viewport = viewportRef.current
@@ -414,9 +822,26 @@ function App() {
         const left = heading.getBoundingClientRect().left - flowRect.left
         return Math.max(0, Math.min(nextTotal - 1, Math.round(left / width)))
       })
+      const nextPageAnchors: (PageAnchor | null)[] = Array.from({ length: nextTotal }, () => null)
+      const nextSentencePages = new Map<string, number>()
+      for (const sentence of flow.querySelectorAll<HTMLElement>('.sentence-unit[data-sentence-index]')) {
+        const chapterElement = sentence.closest<HTMLElement>('[data-chapter-index]')
+        const chapterIndex = Number(chapterElement?.dataset.chapterIndex)
+        const sentenceIndex = Number(sentence.dataset.sentenceIndex)
+        if (!Number.isInteger(chapterIndex) || !Number.isInteger(sentenceIndex)) continue
+        for (const rect of sentence.getClientRects()) {
+          if (rect.width <= 0 || rect.height <= 0) continue
+          const targetPage = Math.max(0, Math.min(nextTotal - 1, Math.floor((rect.left - flowRect.left + 1) / width)))
+          const key = `${chapterIndex}:${sentenceIndex}`
+          if (!nextSentencePages.has(key)) nextSentencePages.set(key, targetPage)
+          nextPageAnchors[targetPage] ??= { chapterIndex, start: sentenceIndex, end: sentenceIndex }
+        }
+      }
 
       setTotalPages(nextTotal)
       setChapterStarts(nextStarts)
+      pageAnchorsRef.current = nextPageAnchors
+      sentencePagesRef.current = nextSentencePages
       const anchor = reflowAnchorRef.current
       if (anchor) {
         const start = nextStarts[anchor.chapterIndex] ?? 0
@@ -424,14 +849,27 @@ function App() {
         const length = Math.max(1, end - start)
         setPageIndex(Math.min(nextTotal - 1, start + Math.round((length - 1) * anchor.ratio)))
         reflowAnchorRef.current = null
+        setReaderPositionReady(true)
+      } else if (pendingLocator) {
+        const resolved = pageForLocator(pendingLocator)
+        const targetPage = resolved ?? nextStarts[pendingLocator.position.chapterIndex] ?? 0
+        setPageIndex(targetPage)
+        setPendingLocator(null)
+        setReaderPositionReady(true)
+        const savedBookmark = activeProgressRef.current?.bookmark?.locator
+        const savedBookmarkPage = savedBookmark ? pageForLocator(savedBookmark) : null
+        setBookmarkPage(savedBookmarkPage)
+        setBookmarkReminderVisible(savedBookmarkPage !== null && savedBookmarkPage !== targetPage)
       } else if (pendingChapter !== null) {
         setPageIndex(nextStarts[pendingChapter] ?? 0)
         setPendingChapter(null)
+        setReaderPositionReady(true)
       } else {
         setPageIndex((current) => Math.min(current, nextTotal - 1))
+        setReaderPositionReady(true)
       }
     })
-  }, [pendingChapter])
+  }, [pageForLocator, pendingChapter, pendingLocator])
 
   useLayoutEffect(() => {
     if (screen !== 'reader') return
@@ -442,6 +880,38 @@ function App() {
     observer.observe(viewport)
     return () => observer.disconnect()
   }, [screen, fontSize, lineHeight, pageMargin, readerTypeface, recalculatePagination])
+
+  useEffect(() => {
+    if (screen !== 'reader' || !readerChaptersReady || !readerPositionReady) return
+    // 这 120ms 只等 CSS columns 完成布局，不用停留时长猜测用户意图。
+    const timer = window.setTimeout(saveCurrentPagePosition, 120)
+    return () => window.clearTimeout(timer)
+  }, [pageIndex, readerChaptersReady, readerPositionReady, saveCurrentPagePosition, screen])
+
+  useEffect(() => {
+    if (screen !== 'reader') return
+    const flush = () => saveCurrentPagePosition()
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', flushWhenHidden)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', flushWhenHidden)
+    }
+  }, [saveCurrentPagePosition, screen])
+
+  useEffect(() => {
+    if (!bookmarkReminderVisible) return
+    const timer = window.setTimeout(() => setBookmarkReminderVisible(false), 6000)
+    return () => window.clearTimeout(timer)
+  }, [bookmarkReminderVisible])
+
+  useEffect(() => {
+    const bookmark = activeProgress?.bookmark?.locator
+    setBookmarkPage(bookmark ? pageForLocator(bookmark) : null)
+  }, [activeProgress?.bookmark, pageForLocator])
 
   useLayoutEffect(() => {
     if (!sentenceSelection || screen !== 'reader') {
@@ -528,23 +998,60 @@ function App() {
     else applySentenceSelection({ chapterIndex, start: sentenceIndex, end: sentenceIndex })
   }
 
-  const openReaderAtChapter = (chapterIndex: number, book: Book = roomBook) => {
+  const openReader = (
+    book: Book,
+    target:
+      | { kind: 'resume' }
+      | { kind: 'chapter'; chapterIndex: number }
+      | { kind: 'locator'; locator: Locator },
+    rememberOpening = true,
+  ) => {
+    if (rememberOpening) rememberBookOpened(book)
     setRoomBook(book)
+    setRoomMenuOpen(false)
+    setDeleteBookDialogOpen(false)
     setReaderChaptersReady(false)
+    setReaderPositionReady(false)
     setScreen('reader')
     setChromeVisible(false)
     setPanel(null)
-    loadBookChapters(book.id)
-      .then((loadedChapters) => {
+    setReturnPage(null)
+    setBookmarkMenuOpen(false)
+    setBookmarkReminderVisible(false)
+    setPageIndex(0)
+    Promise.all([
+      loadBookChapters(book.id),
+      getReadingProgress(book.id).catch(() => undefined),
+    ])
+      .then(([loadedChapters, savedProgress]) => {
         if (!loadedChapters.length) {
           setScreen('shelf')
           setReaderChaptersReady(true)
           showToast('这本书暂时无法打开', '没有从这本书里解析出可阅读的章节。')
           return
         }
+        adoptActiveProgress(savedProgress ?? null)
         setReaderChapters(loadedChapters)
-        setPendingChapter(chapterIndex)
-        setPageIndex(0)
+        // 动态分页接管前先给每章一个稳定的兜底页；测试环境、隐藏标签页或
+        // 尚未取得 viewport 宽度时也能完成目录与 Locator 跳转。
+        setChapterStarts(loadedChapters.map((_, index) => index))
+        setTotalPages(Math.max(1, loadedChapters.length))
+        if (target.kind === 'resume' && savedProgress) {
+          resumeEligibleRef.current = true
+          setPendingLocator(savedProgress.locator)
+          setPendingChapter(null)
+        } else if (target.kind === 'locator') {
+          // 痕迹入口携带稳定定位，等动态分页完成后再落到原句所在页。
+          // 已有阅读位置时只算临时翻看，不覆盖“上次读到”。
+          resumeEligibleRef.current = !savedProgress
+          setPendingLocator(target.locator)
+          setPendingChapter(null)
+        } else {
+          // 没有旧位置时，用户选章节就是第一次开始阅读；有旧位置时才算临时翻看。
+          resumeEligibleRef.current = !savedProgress
+          setPendingLocator(null)
+          setPendingChapter(target.kind === 'chapter' ? target.chapterIndex : 0)
+        }
         setReaderChaptersReady(true)
       })
       .catch((error) => {
@@ -554,12 +1061,30 @@ function App() {
       })
   }
 
-  const openRoom = (book: Book) => {
+  const openReaderAtResume = (book: Book = roomBook, rememberOpening = true) => (
+    openReader(book, { kind: 'resume' }, rememberOpening)
+  )
+  const openReaderAtChapter = (chapterIndex: number, book: Book = roomBook, rememberOpening = true) => (
+    openReader(book, { kind: 'chapter', chapterIndex }, rememberOpening)
+  )
+  const openReaderAtLocator = (locator: Locator, book: Book = roomBook, rememberOpening = true) => (
+    openReader(book, { kind: 'locator', locator }, rememberOpening)
+  )
+
+  const openRoom = (book: Book, rememberOpening = true) => {
+    if (rememberOpening) rememberBookOpened(book)
     setRoomBook(book)
+    setRoomMenuOpen(false)
+    setDeleteBookDialogOpen(false)
     setScreen('room')
     setReaderChaptersReady(false)
-    loadBookChapters(book.id)
-      .then((loadedChapters) => {
+    adoptActiveProgress(progressByBook[book.id] ?? null)
+    Promise.all([
+      loadBookChapters(book.id),
+      getReadingProgress(book.id).catch(() => undefined),
+    ])
+      .then(([loadedChapters, savedProgress]) => {
+        adoptActiveProgress(savedProgress ?? null)
         setReaderChapters(loadedChapters)
         setReaderChaptersReady(true)
       })
@@ -569,10 +1094,44 @@ function App() {
       })
   }
 
+  const openSavedReaderRef = useRef(openReaderAtResume)
+  const openSavedRoomRef = useRef(openRoom)
+  openSavedReaderRef.current = openReaderAtResume
+  openSavedRoomRef.current = openRoom
+
+  useEffect(() => {
+    if (lastViewRestored) return
+    const saved = initialViewRef.current
+    if (saved.screen === 'shelf' || !saved.bookId) {
+      setLastViewRestored(true)
+      return
+    }
+    const savedBook = shelfBooks.find((book) => book.id === saved.bookId)
+    if (!savedBook) {
+      if (booksState.status === 'loading') return
+      setLastViewRestored(true)
+      return
+    }
+    setLastViewRestored(true)
+    if (saved.screen === 'reader') openSavedReaderRef.current(savedBook, false)
+    else openSavedRoomRef.current(savedBook, false)
+  }, [booksState.status, lastViewRestored, shelfBooks])
+
+  useEffect(() => {
+    if (!lastViewRestored) return
+    writeLastView(screen === 'shelf'
+      ? { screen: 'shelf' }
+      : { screen, bookId: roomBook.id })
+  }, [lastViewRestored, roomBook.id, screen])
+
   const turnToPage = (nextPage: number) => {
     const bounded = Math.max(0, Math.min(totalPages - 1, nextPage))
     if (bounded === pageIndex) return
+    resumeEligibleRef.current = true
     setPageIndex(bounded)
+    setReturnPage(null)
+    setBookmarkReminderVisible(false)
+    setBookmarkMenuOpen(false)
     setPanel(null)
     setChromeVisible(false)
     setActiveTrace(null)
@@ -582,6 +1141,12 @@ function App() {
   const handleReaderClick = (event: React.MouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement
     if (target.closest('button, mark, textarea, input, select')) return
+    if (bookmarkMenuOpen) {
+      setBookmarkMenuOpen(false)
+      setChromeVisible(false)
+      setPanel(null)
+      return
+    }
     if (sentenceSelection) {
       clearSelection()
       return
@@ -602,6 +1167,8 @@ function App() {
     }
     clearSelection()
     try {
+      resumeEligibleRef.current = true
+      saveResumeLocator(locator)
       await persistHighlight(locator)
       await refreshTraces()
       showToast('这句话已经留在页边。')
@@ -671,6 +1238,8 @@ function App() {
     setNoteDraft('')
     setNoteMenuTargetId(null)
     try {
+      resumeEligibleRef.current = true
+      saveResumeLocator(locator)
       await persistNote(locator, text, editingNoteId ?? undefined, highlighted)
       // 痕迹 id 就是定位串，所以写完之后这个 id 一定能对上重新读出来的那条痕迹。
       setNoteTargetTraceId(passageKey(locator.position))
@@ -721,10 +1290,123 @@ function App() {
 
   const jumpToChapter = (chapterIndex: number) => {
     if (returnPage === null) setReturnPage(pageIndex)
+    resumeEligibleRef.current = false
     setPageIndex(chapterStarts[chapterIndex] ?? 0)
+    setBookmarkReminderVisible(false)
     setPanel(null)
     setChromeVisible(false)
     setActiveTrace(null)
+  }
+
+  const jumpToTrace = (trace: Trace) => {
+    if (!trace.locator || trace.drifted) {
+      jumpToChapter(trace.chapterIndex)
+      return
+    }
+    if (returnPage === null) setReturnPage(pageIndex)
+    resumeEligibleRef.current = false
+    setPageIndex(pageForLocator(trace.locator) ?? chapterStarts[trace.chapterIndex] ?? 0)
+    setBookmarkReminderVisible(false)
+    setPanel(null)
+    setChromeVisible(false)
+    setActiveTrace(null)
+    clearSelection()
+  }
+
+  const currentProgress = activeProgress?.bookId === roomBook.id
+    ? activeProgress
+    : progressByBook[roomBook.id] ?? null
+  const currentBookmark = currentProgress?.bookmark
+  const bookmarkIsOnCurrentPage = bookmarkPage !== null && bookmarkPage === pageIndex
+
+  const moveBookmarkHere = () => {
+    const locator = locatorForPage(pageIndex)
+    if (!locator) {
+      showToast('这一页暂时没法折起来。')
+      return
+    }
+    resumeEligibleRef.current = true
+    saveResumeLocator(locator, pageIndex)
+    const resumed = activeProgressRef.current
+    if (!resumed) return
+    const next = moveReadingBookmark(resumed, locator)
+    writeProgress(next)
+    setBookmarkPage(pageIndex)
+    setBookmarkMenuOpen(false)
+    setBookmarkReminderVisible(false)
+    showToast(currentBookmark ? '折页已经移到这里。' : '这一页已经折好。')
+  }
+
+  const removeBookmark = () => {
+    const progress = activeProgressRef.current
+    if (!progress?.bookmark) return
+    writeProgress(removeReadingBookmark(progress))
+    setBookmarkPage(null)
+    setBookmarkMenuOpen(false)
+    setBookmarkReminderVisible(false)
+    showToast('折页已经展平。')
+  }
+
+  const returnToBookmark = () => {
+    const locator = activeProgressRef.current?.bookmark?.locator
+    const targetPage = bookmarkPage ?? (locator ? pageForLocator(locator) : null)
+    if (targetPage === null) {
+      showToast('这枚折页暂时找不到原来的句子。')
+      return
+    }
+    if (returnPage === null) setReturnPage(pageIndex)
+    resumeEligibleRef.current = false
+    setPageIndex(targetPage)
+    setBookmarkPage(targetPage)
+    setBookmarkMenuOpen(false)
+    setBookmarkReminderVisible(false)
+    setPanel(null)
+    setChromeVisible(false)
+    clearSelection()
+  }
+
+  const handleBookmarkButton = () => {
+    if (!currentBookmark) {
+      moveBookmarkHere()
+      return
+    }
+    setBookmarkMenuOpen((open) => !open)
+  }
+
+  const confirmDeleteRoomBook = async () => {
+    if (deletingBook) return
+    const bookId = roomBook.id
+    const bookTitle = roomBook.title
+    setDeletingBook(true)
+    try {
+      await bookTouchWriteRef.current
+      await deleteBookCompletely(bookId)
+      setRemovedBookIds((current) => new Set(current).add(bookId))
+      setBookRecency((current) => {
+        const next = { ...current }
+        delete next[bookId]
+        writeBookRecency(next)
+        return next
+      })
+      setProgressByBook((current) => {
+        const next = { ...current }
+        delete next[bookId]
+        return next
+      })
+      setTraces((current) => current.filter((trace) => trace.bookId !== bookId))
+      setActiveProgress(null)
+      activeProgressRef.current = null
+      setDeleteBookDialogOpen(false)
+      setRoomMenuOpen(false)
+      setScreen('shelf')
+      writeLastView({ screen: 'shelf' })
+      setImportKey((key) => key + 1)
+      showToast(`《${bookTitle}》已经移出书房。`)
+    } catch (error) {
+      showToast('这本书暂时没能移出', error instanceof Error ? error.message : String(error))
+    } finally {
+      setDeletingBook(false)
+    }
   }
 
   /**
@@ -757,9 +1439,29 @@ function App() {
 
   if (screen === 'room') {
     const hasChapters = readerChaptersReady && readerChapters.length > 0
+    const roomBookDeletable = loadedBooks.some((book) => book.id === roomBook.id)
+    const resumeChapterIndex = currentProgress?.locator.position.chapterIndex
+    const resumeChapter = resumeChapterIndex === undefined
+      ? undefined
+      : readerChapters[resumeChapterIndex]?.chapter ?? `第 ${resumeChapterIndex + 1} 章`
+    const resumeQuote = currentProgress?.locator.position.selectedText
     return (
       <main className="room-shell">
-        <BrandHeader onBack={() => setScreen('shelf')} />
+        <BrandHeader
+          onBack={() => { setRoomMenuOpen(false); setScreen('shelf') }}
+          onOpenBookMenu={roomBookDeletable ? () => setRoomMenuOpen((open) => !open) : undefined}
+          bookMenuOpen={roomMenuOpen}
+        />
+        {roomMenuOpen && roomBookDeletable && (
+          <>
+            <button className="room-book-menu-dismiss" type="button" aria-label="收起书籍操作" onClick={() => setRoomMenuOpen(false)} />
+            <div className="room-book-menu" role="menu">
+              <button type="button" role="menuitem" onClick={() => { setRoomMenuOpen(false); setDeleteBookDialogOpen(true) }}>
+                <Trash2 />移出书房
+              </button>
+            </div>
+          </>
+        )}
         <section className="room-hero">
           <BookCover book={roomBook} large />
           <div className="room-book-info">
@@ -767,15 +1469,15 @@ function App() {
             <em>{roomBook.englishTitle}</em>
             <p className="room-author">{roomBook.author}</p>
             <button className="room-description-preview" type="button" onClick={() => setDescriptionOpen(true)} aria-haspopup="dialog">
-              <span>{roomBook.description}</span><small>展开</small>
+              <span>{roomBook.description}</span>
             </button>
           </div>
         </section>
         <section className="room-details">
-          <button className="room-recent" type="button" onClick={() => hasChapters && openReaderAtChapter(0)}>
-            <BookOpenText /><small>{roomBook.lastChapter ? `最近停留 · ${roomBook.lastChapter} · ${roomBook.statusLabel} ${roomBook.progress}%` : '尚未开始阅读'}</small>
-            <q>{roomBook.lastChapter ? roomBook.quote : '这本书还在等待第一次翻开。'}</q>
-            <span>{hasChapters ? (roomBook.lastChapter ? '从这里继续' : '从头开始读') : '尚无阅读位置'} <ChevronRight /></span>
+          <button className="room-recent" type="button" onClick={() => hasChapters && openReaderAtResume()}>
+            <BookOpenText /><small>{resumeChapter ? `上次读到 · ${resumeChapter}` : '尚未开始阅读'}</small>
+            <q>{resumeQuote || '这本书还在等待第一次翻开。'}</q>
+            <span>{hasChapters ? (currentProgress ? '从这里继续' : '从头开始读') : '尚无阅读位置'} <ChevronRight /></span>
           </button>
         </section>
         {hasChapters && (
@@ -791,10 +1493,16 @@ function App() {
                   {chapterTraces.length > 0 && (
                     <div className="room-trace-list">
                       {chapterTraces.map((trace) => (
-                        <button type="button" key={trace.id} onClick={() => openReaderAtChapter(index)}>
+                        <button
+                          type="button"
+                          key={trace.id}
+                          onClick={() => trace.locator && !trace.drifted
+                            ? openReaderAtLocator(trace.locator)
+                            : openReaderAtChapter(index)}
+                        >
                           <q><span className={traceLineClass(trace)}>{trace.quote}</span></q>
-                          {trace.foxNotes?.map((note) => <p key={note.id}><b>小狐狸</b>：{note.text}</p>)}
-                          {trace.fish && <p className="fish-note"><b>小鱼</b>：{trace.fish}</p>}
+                          {trace.foxNotes?.map((note) => <p key={note.id}><b>{userLabel}</b>：{note.text}</p>)}
+                          {trace.fish && <p className="fish-note"><b>{companionLabel}</b>：{trace.fish}</p>}
                         </button>
                       ))}
                     </div>
@@ -813,13 +1521,33 @@ function App() {
             </section>
           </div>
         )}
+        {deleteBookDialogOpen && (
+          <div className="delete-book-backdrop" onClick={() => { if (!deletingBook) setDeleteBookDialogOpen(false) }}>
+            <section className="delete-book-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-book-title" onClick={(event) => event.stopPropagation()}>
+              <small>REMOVE FROM THE LIBRARY</small>
+              <h2 id="delete-book-title">移出《{roomBook.title}》？</h2>
+              <p>EPUB、阅读位置、折页、划线、批注和页边文字都会从这间本地书房中抹去。</p>
+              <div>
+                <button type="button" onClick={() => setDeleteBookDialogOpen(false)} disabled={deletingBook}>先留下</button>
+                <button className="confirm-delete-book" type="button" onClick={() => { void confirmDeleteRoomBook() }} disabled={deletingBook}>
+                  {deletingBook ? '正在移出…' : '确认移出'}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
         <Toast toast={toast} onClose={clearToast} />
       </main>
     )
   }
 
   if (screen === 'reader') {
-    const currentChapter = readerChapters[currentChapterIndex]
+    const currentChapter = readerChapters[currentChapterIndex] ?? {
+      chapter: '',
+      title: '',
+      kicker: '',
+      paragraphs: [],
+    }
     return (
       <main className={`reader-shell reader-${theme}`}>
         {!readerChaptersReady && (
@@ -828,10 +1556,30 @@ function App() {
           </div>
         )}
         <header className={`reader-topbar ${chromeVisible ? 'is-visible' : ''}`}>
-          <button className="icon-button back-button" type="button" onClick={() => setScreen('shelf')} aria-label="返回书架"><ArrowLeft size={19} /><span>书架</span></button>
+          <button className="icon-button back-button" type="button" onClick={() => { saveCurrentPagePosition(); setScreen('shelf') }} aria-label="返回书架"><ArrowLeft size={19} /><span>书架</span></button>
           <div className="reader-location"><span>{roomBook.title}</span></div>
-          <span className="reader-progress">{Math.round(((pageIndex + 1) / totalPages) * 100)}%</span>
+          <button
+            className={`reader-bookmark-button ${currentBookmark ? 'has-bookmark' : ''} ${bookmarkIsOnCurrentPage ? 'is-current' : ''}`}
+            type="button"
+            onClick={handleBookmarkButton}
+            aria-label={currentBookmark ? '打开折页' : '在这里折页'}
+            title={currentBookmark ? '折页' : '在这里折页'}
+          >
+            <Bookmark />
+          </button>
         </header>
+
+        {bookmarkMenuOpen && currentBookmark && (
+          <section className="bookmark-menu" aria-label="折页">
+            <small>原折 · 第 {currentBookmark.locator.position.chapterIndex + 1} 章</small>
+            <q>{currentBookmark.locator.position.selectedText}</q>
+            <div>
+              {!bookmarkIsOnCurrentPage && <button type="button" onClick={returnToBookmark}>回到原折</button>}
+              {!bookmarkIsOnCurrentPage && <button type="button" onClick={moveBookmarkHere}>移折至此</button>}
+              <button type="button" onClick={removeBookmark}>取消折页</button>
+            </div>
+          </section>
+        )}
 
         <article
           className="reader-page reader-page-v2"
@@ -892,7 +1640,12 @@ function App() {
           <div className="page-number" aria-label={`第 ${pageIndex + 1} 页，共 ${totalPages} 页`}>{String(pageIndex + 1).padStart(2, '0')}<span />{String(totalPages).padStart(2, '0')}</div>
         </article>
 
-        {returnPage !== null && <button className="return-slip" type="button" onClick={() => { setPageIndex(returnPage); setReturnPage(null) }}><CornerUpLeft />回到刚才的位置</button>}
+        {returnPage !== null && <button className="return-slip" type="button" onClick={() => { resumeEligibleRef.current = true; setPageIndex(returnPage); setReturnPage(null); setBookmarkReminderVisible(false) }}><CornerUpLeft />回到刚才的位置</button>}
+        {bookmarkReminderVisible && currentBookmark && (
+          <button className="bookmark-reminder" type="button" onClick={returnToBookmark}>
+            <Bookmark />折页还在第 {currentBookmark.locator.position.chapterIndex + 1} 章 · 回去看看
+          </button>
+        )}
 
         {activeTrace && (
           <div className="trace-detail-backdrop" onClick={() => { setActiveTrace(null); setNoteMenuTargetId(null) }}>
@@ -901,15 +1654,18 @@ function App() {
               role="dialog"
               aria-modal="true"
               aria-label="划线详情"
-              onClick={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (noteMenuTargetId) setNoteMenuTargetId(null)
+              }}
               style={{ '--trace-font-family': `var(--font-reading-${readerTypeface})` } as React.CSSProperties}
             >
               <blockquote>“<span className={traceLineClass(activeTrace)}>{activeTrace.quote}</span>”</blockquote>
               {activeTrace.foxNotes?.length ? activeTrace.foxNotes.map((note) => <div className="trace-note-block" key={note.id}>
-                <div className="trace-note-meta"><b>小狐狸</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}>···</button>{noteMenuTargetId === note.id && <span className="note-action-menu trace-note-menu"><button type="button" onClick={() => reviseActiveTraceNote(activeTrace, note)}>修订</button><button type="button" onClick={() => removeActiveTraceNote(note.id)}>抹去文字</button></span>}</span></div>
+                <div className="trace-note-meta"><b>{userLabel}</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}><SquarePen aria-hidden="true" /></button>{noteMenuTargetId === note.id && <span className="note-action-menu trace-note-menu"><button type="button" onClick={() => reviseActiveTraceNote(activeTrace, note)}>修订</button><button type="button" onClick={() => removeActiveTraceNote(note.id)}>抹去文字</button></span>}</span></div>
                 <p>{note.text}</p>
               </div>) : <button className="empty-note" type="button" onClick={() => { setSelectedText(activeTrace.quote); setNoteTargetTraceId(activeTrace.id); setNoteTargetLocator(activeTrace.locator ?? null); setEditingNoteId(null); setNoteDraft(''); setNoteMenuTargetId(null); setActiveTrace(null); setNoteComposerOpen(true) }}>这里还没有文字。留下一道痕迹</button>}
-              {activeTrace.fish && <div className="trace-note-block fish-detail"><div className="trace-note-meta"><b>小鱼</b><time>{activeTrace.fishAt}</time></div><p>{activeTrace.fish}</p></div>}
+              {activeTrace.fish && <div className="trace-note-block fish-detail"><div className="trace-note-meta"><b>{companionLabel}</b><time>{activeTrace.fishAt}</time></div><p>{activeTrace.fish}</p></div>}
             </section>
           </div>
         )}
@@ -921,7 +1677,7 @@ function App() {
             aria-label="句子操作"
             style={{ left: bubblePosition?.left ?? '50%', top: bubblePosition?.top ?? 0 }}
           >
-            <button type="button" onClick={() => { void navigator.clipboard?.writeText(selectedText); showToast('已复制。'); clearSelection() }}><Copy />复制</button>
+            <button type="button" onClick={() => { void copySelection() }}><Copy />摘录</button>
             <button type="button" onClick={selectedRangeIsHighlighted ? cancelHighlight : saveHighlight}><Highlighter />{selectedRangeIsHighlighted ? '抹去' : '划线'}</button>
             <button type="button" onClick={openSentenceNoteSheet}><MessageSquareText />{selectedRangeTrace?.foxNotes?.length ? '重温' : '留痕'}</button>
           </div>
@@ -930,16 +1686,19 @@ function App() {
         {noteComposerOpen && (
           <div className="note-backdrop" onClick={closeNoteSheet}>
             <section
-              className={`note-composer ${noteEntries.length ? 'has-notes' : ''}`}
+            className={`note-composer ${noteEntries.length ? 'has-notes' : ''}`}
               role="dialog"
               aria-modal="true"
               aria-label={noteEntries.length ? '重温批注' : '留痕'}
-              onClick={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (noteMenuTargetId) setNoteMenuTargetId(null)
+              }}
               style={{ '--trace-font-family': `var(--font-reading-${readerTypeface})` } as React.CSSProperties}
             >
               <div className="note-quote">“<span className={noteQuoteLineClass}>{selectedText}</span>”</div>
               {noteEntries.map((note) => <article className="sent-note" key={note.id}>
-                <div className="sent-note-heading"><b>小狐狸</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}>···</button>{noteMenuTargetId === note.id && <span className="note-action-menu"><button type="button" onClick={() => reviseNote(note)}>修订</button><button type="button" onClick={() => removeNote(note.id)}>抹去文字</button></span>}</span></div>
+                <div className="sent-note-heading"><b>{userLabel}</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}><SquarePen aria-hidden="true" /></button>{noteMenuTargetId === note.id && <span className="note-action-menu"><button type="button" onClick={() => reviseNote(note)}>修订</button><button type="button" onClick={() => removeNote(note.id)}>抹去文字</button></span>}</span></div>
                 <p>{note.text}</p>
               </article>)}
               <textarea value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Thoughts..." autoFocus={!noteEntries.length} />
@@ -957,8 +1716,8 @@ function App() {
           <section className="reader-panel">
             <div className="panel-handle" />
             {panel === 'toc' && <><PanelHeading eyebrow="CONTENTS" title="目录" close={() => setPanel(null)} /><div className="toc-list">{readerChapters.map((chapter, index) => <button className={index === currentChapterIndex ? 'is-current' : ''} type="button" key={chapter.title} onClick={() => jumpToChapter(index)}><span>{chapter.chapter}</span><strong>{chapter.title}</strong><small>{String((chapterStarts[index] ?? 0) + 1).padStart(2, '0')}</small></button>)}</div></>}
-            {panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={() => setPanel(null)} /><div className="trace-list">{bookTraces.length === 0 ? <p className="panel-empty">这本书还没有留下痕迹。</p> : [...bookTraces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => jumpToChapter(trace.chapterIndex)}><small>{trace.chapter}</small><blockquote>“<span className={traceLineClass(trace)}>{trace.quote}</span>”</blockquote>{trace.foxNotes?.map((note) => <p key={note.id}><b>小狐狸</b>：{note.text}</p>)}{trace.fish && <p className="fish-note"><b>小鱼</b>：{trace.fish}</p>}</button>)}</div></>}
-            {panel === 'stats' && <><PanelHeading eyebrow="READING LIFE" title="阅读统计" close={() => setPanel(null)} /><div className="stats-grid stats-grid-v2"><div><strong>{Math.round(((pageIndex + 1) / totalPages) * 100)}<sup>%</sup></strong><small>当前进度</small></div><div><strong>{currentChapterIndex + 1} / {readerChapters.length} 章</strong><small>读到第几章</small></div><div><strong>{bookTraces.length} 条</strong><small>笔记与划线</small></div></div></>}
+            {panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={() => setPanel(null)} /><div className="trace-list">{bookTraces.length === 0 ? <p className="panel-empty">这本书还没有留下痕迹。</p> : [...bookTraces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => jumpToTrace(trace)}><small>{trace.chapter}</small><blockquote>“<span className={traceLineClass(trace)}>{trace.quote}</span>”</blockquote>{trace.foxNotes?.map((note) => <p key={note.id}><b>{userLabel}</b>：{note.text}</p>)}{trace.fish && <p className="fish-note"><b>{companionLabel}</b>：{trace.fish}</p>}</button>)}</div></>}
+            {panel === 'stats' && <><PanelHeading eyebrow="READING LIFE" title="阅读统计" close={() => setPanel(null)} /><div className="stats-grid stats-grid-v2"><div><strong>{Math.round(((pageIndex + 1) / totalPages) * 100)}<sup>%</sup></strong><small>当前所在位置</small></div><div><strong>{currentChapterIndex + 1} / {readerChapters.length} 章</strong><small>当前章节</small></div><div><strong>{bookTraces.length} 条</strong><small>笔记与划线</small></div></div></>}
             {panel === 'type' && <><PanelHeading eyebrow="TYPESETTING" title="排版" close={() => setPanel(null)} /><div className="type-settings">
               <label><span>字号 <small>{fontSize}px</small></span><input type="range" min="16" max="25" value={fontSize} onChange={(event) => { rememberReflowAnchor(); setFontSize(Number(event.target.value)) }} /></label>
               <label><span>行距 <small>{lineHeight.toFixed(1)}</small></span><input type="range" min="1.5" max="2.3" step="0.1" value={lineHeight} onChange={(event) => { rememberReflowAnchor(); setLineHeight(Number(event.target.value)) }} /></label>
@@ -982,7 +1741,150 @@ function App() {
 
   return (
     <main className="shelf-shell shelf-shell-v2">
-      <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} onFileChange={handleFileChange} />
+      <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} onOpenSidebar={() => setSidebarOpen(true)} onOpenImport={openImportDialog} />
+      {importDialogOpen && (
+        <div className="import-dialog-backdrop" onClick={closeImportDialog}>
+          <section
+            className="import-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="import-dialog-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="import-dialog-heading">
+              <div><small>ADD TO THE LIBRARY</small><h2 id="import-dialog-title">藏入书籍</h2></div>
+              <button type="button" onClick={closeImportDialog} aria-label="关闭藏书弹窗"><X /></button>
+            </header>
+
+            <label className={`import-file-drop ${preparedImport ? 'has-file' : ''}`}>
+              <span className="import-file-plus">{importParsing ? <span className="import-spinner" /> : <Plus />}</span>
+              <span>
+                <b>{importParsing ? '正在拆封…' : preparedImport ? preparedImport.file.name : '选择一本 EPUB'}</b>
+                <small>{preparedImport ? `${preparedImport.chapters.length} 个章节 · 点击可换一本` : '书名、作者与简介会自动带入'}</small>
+              </span>
+              <input
+                type="file"
+                accept=".epub,application/epub+zip"
+                aria-label="选择 EPUB 文件"
+                onChange={handleFileChange}
+                disabled={importParsing || importSaving}
+              />
+            </label>
+
+            <div className={`import-editor ${preparedImport ? 'is-ready' : ''}`}>
+              <div className="import-fields">
+                <label><span>书名</span><input value={importDraft.title} disabled={!preparedImport} onChange={(event) => setImportDraft((draft) => ({ ...draft, title: event.target.value }))} /></label>
+                <label><span>英文名 <small>可留空</small></span><input value={importDraft.englishTitle} disabled={!preparedImport} onChange={(event) => setImportDraft((draft) => ({ ...draft, englishTitle: event.target.value }))} /></label>
+                <label><span>作者</span><input value={importDraft.author} disabled={!preparedImport} onChange={(event) => setImportDraft((draft) => ({ ...draft, author: event.target.value }))} /></label>
+                <label className="import-description-field"><span>简介 <small>可留空</small></span><textarea value={importDraft.description} disabled={!preparedImport} onChange={(event) => setImportDraft((draft) => ({ ...draft, description: event.target.value }))} /></label>
+              </div>
+
+              <section className="import-cover-controls" aria-labelledby="import-cover-title">
+                <div className="import-section-heading"><span id="import-cover-title">书籍封面</span><small>可随时替换</small></div>
+                <div className="import-cover-actions">
+                  <label className="import-image-button">
+                    <ImagePlus /><span>导入图片</span>
+                    <input type="file" accept="image/*" aria-label="导入封面图片" onChange={handleCoverFileChange} disabled={!preparedImport || importSaving} />
+                  </label>
+                  {preparedImport?.embeddedCoverUrl && (
+                    <button type="button" onClick={() => setImportDraft((draft) => ({ ...draft, coverUrl: preparedImport.embeddedCoverUrl }))}>
+                      <Upload />书内封面
+                    </button>
+                  )}
+                </div>
+                <div className="import-tone-row" aria-label="Marginalia 内部封面颜色">
+                  <small>MG 内部封面</small>
+                  <div>
+                    {COVER_TONES.map((tone) => (
+                      <button
+                        type="button"
+                        key={tone.id}
+                        className={`tone-${tone.id} ${!importDraft.coverUrl && importDraft.tone === tone.id ? 'is-selected' : ''}`}
+                        onClick={() => chooseGeneratedCover(tone.id)}
+                        aria-label={`选择${tone.label}封面`}
+                        aria-pressed={!importDraft.coverUrl && importDraft.tone === tone.id}
+                        disabled={!preparedImport}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <section className="import-preview" aria-label="书籍预览">
+              <small>PREVIEW</small>
+              <div className="import-preview-book">
+                <BookCover book={{
+                  id: 'import-preview',
+                  title: importDraft.title || '未题名',
+                  englishTitle: importDraft.englishTitle,
+                  author: importDraft.author || '未知作者',
+                  description: importDraft.description,
+                  status: 'reading',
+                  statusLabel: '在读',
+                  progress: 0,
+                  quote: '',
+                  tone: importDraft.tone,
+                  coverUrl: importDraft.coverUrl,
+                }} />
+                <div>
+                  <span>在读</span>
+                  <strong>{importDraft.title || '等待一本书'}</strong>
+                  {importDraft.englishTitle && <em>{importDraft.englishTitle}</em>}
+                  <small>{importDraft.author || '作者会出现在这里'}</small>
+                  <p>{importDraft.description || '简介会和这本书一起留在书架。'}</p>
+                </div>
+              </div>
+            </section>
+
+            <footer className="import-dialog-actions">
+              <button type="button" onClick={closeImportDialog} disabled={importSaving}>暂不藏入</button>
+              <button className="save-import" type="button" onClick={() => { void saveImport() }} disabled={!preparedImport || !importDraft.title.trim() || importParsing || importSaving}>
+                {importSaving ? '正在藏入…' : '藏入书架'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+      {sidebarOpen && (
+        <>
+          <button className="shelf-sidebar-backdrop" type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭侧边栏" />
+          <aside className="shelf-sidebar" aria-label="侧边栏">
+            <header className="sidebar-heading">
+              <div><small>THE READING ROOM</small><h2>书房</h2></div>
+              <button type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭侧边栏面板"><X /></button>
+            </header>
+            <section className="calling-card" aria-labelledby="calling-card-title">
+              <div className="calling-card-title">
+                <div><small>CALLING CARDS</small><h3 id="calling-card-title">名帖</h3></div>
+                <span>称呼与落款</span>
+              </div>
+              <label>
+                <span>我的落款</span>
+                <input aria-label="我的落款" value={callingCard.userName} onChange={(event) => updateCallingCard({ userName: event.target.value })} />
+                <small>写批注时，文字会署上这个名字。</small>
+              </label>
+              <label>
+                <span>共读者的名字</span>
+                <input aria-label="共读者的名字" value={callingCard.companionName} onChange={(event) => updateCallingCard({ companionName: event.target.value })} />
+              </label>
+              <label>
+                <span>如何称呼共读者</span>
+                <select aria-label="如何称呼共读者" value={callingCard.companionPronoun} onChange={(event) => updateCallingCard({ companionPronoun: event.target.value as CompanionPronoun })}>
+                  <option value="她">她</option>
+                  <option value="他">他</option>
+                  <option value="TA">TA</option>
+                  <option value="name">只使用名字</option>
+                </select>
+              </label>
+              <div className="calling-card-preview">
+                <span>{companionLabel}</span>
+                <p>{companionSubject}来过时，留下的文字会以这个名字落款。</p>
+              </div>
+            </section>
+          </aside>
+        </>
+      )}
       <nav className="shelf-filters" aria-label="书架分类">
         {filters.map((item) => {
           const count = item.id === 'all' ? shelfBooks.length : shelfBooks.filter((book) => book.status === item.id).length
@@ -991,14 +1893,30 @@ function App() {
       </nav>
       {shelfView === 'list' ? (
         <section className="book-list" aria-label="书籍列表">
+          {booksState.status !== 'ready' && (
+            <div className="shelf-empty is-loading" role="status">
+              <small>ARRANGING THE SHELVES</small>
+              <h2>正在整理书架…</h2>
+            </div>
+          )}
+          {booksState.status === 'ready' && filteredBooks.length === 0 && (
+            <div className="shelf-empty">
+              <small>A QUIET SHELF</small>
+              <h2>{shelfBooks.length ? '这一格还空着' : '书房还在等第一本书'}</h2>
+              <p>{shelfBooks.length ? '其他分类里或许还有正在等待的书。' : '藏入一册 EPUB，让这里从你的书开始。'}</p>
+              <button type="button" onClick={shelfBooks.length ? () => setFilter('all') : openImportDialog}>
+                {shelfBooks.length ? '回到全部藏书' : '藏入第一本书'} <ChevronRight />
+              </button>
+            </div>
+          )}
           {filteredBooks.map((book) => (
             <article className="book-row book-row-v2" key={book.id}>
               <button className="book-cover-button" type="button" onClick={() => openRoom(book)} aria-label={`查看《${book.title}》的书籍档案`}><BookCover book={book} /><small>查看书籍档案</small></button>
-              <button className="book-main book-main-button" type="button" onClick={() => { if (openableBookIds.has(book.id)) openReaderAtChapter(0, book); else { setRoomBook(book); showToast('这本书还没有拆封。') } }} aria-label={`${book.progress ? '继续阅读' : '打开'}《${book.title}》`}>
-                <span className="book-state">{book.statusLabel} {book.progress > 0 && `· ${book.progress}%`}</span><strong>{book.title}</strong><em>{book.englishTitle}</em><span className="book-author">{book.author}</span><span className="book-description">{book.description}</span><span className="open-book">{book.progress ? '继续阅读' : '翻开看看'} <ChevronRight /></span>
+              <button className="book-main book-main-button" type="button" onClick={() => { if (openableBookIds.has(book.id)) openReaderAtResume(book); else { setRoomBook(book); showToast('这本书还没有拆封。') } }} aria-label={`${book.lastChapter ? '继续阅读' : '打开'}《${book.title}》`}>
+                <span className="book-state">{book.statusLabel}</span><strong>{book.title}</strong><em>{book.englishTitle}</em><span className="book-author">{book.author}</span><span className="book-description">{book.description}</span><span className="open-book">{book.lastChapter ? '继续阅读' : '翻开看看'} <ChevronRight /></span>
               </button>
-              <button className="book-trace book-trace-button" type="button" onClick={() => { if (openableBookIds.has(book.id)) openReaderAtChapter(0, book); else { setRoomBook(book); showToast('这里还没有阅读痕迹。') } }} aria-label={`查看《${book.title}》最近停留的位置`}>
-                <BookOpenText /><small>{book.lastChapter ? `最近停留 · ${book.lastChapter}` : '尚未开始阅读'}</small>
+              <button className="book-trace book-trace-button" type="button" onClick={() => { if (openableBookIds.has(book.id)) openReaderAtResume(book); else { setRoomBook(book); showToast('这里还没有阅读痕迹。') } }} aria-label={`查看《${book.title}》上次读到的位置`}>
+                <BookOpenText /><small>{book.lastChapter ? `上次读到 · ${book.lastChapter}` : '尚未开始阅读'}</small>
                 <q>{book.lastChapter ? book.quote : '这本书还在等待第一次翻开。'}</q>
                 <span>{book.lastChapter ? '回到这句话' : '翻开看看'} <ChevronRight /></span>
               </button>
@@ -1007,6 +1925,22 @@ function App() {
         </section>
       ) : (
         <section className="book-grid" aria-label="封面书架">
+          {booksState.status !== 'ready' && (
+            <div className="shelf-empty is-loading" role="status">
+              <small>ARRANGING THE SHELVES</small>
+              <h2>正在整理书架…</h2>
+            </div>
+          )}
+          {booksState.status === 'ready' && filteredBooks.length === 0 && (
+            <div className="shelf-empty">
+              <small>A QUIET SHELF</small>
+              <h2>{shelfBooks.length ? '这一格还空着' : '书房还在等第一本书'}</h2>
+              <p>{shelfBooks.length ? '其他分类里或许还有正在等待的书。' : '藏入一册 EPUB，让这里从你的书开始。'}</p>
+              <button type="button" onClick={shelfBooks.length ? () => setFilter('all') : openImportDialog}>
+                {shelfBooks.length ? '回到全部藏书' : '藏入第一本书'} <ChevronRight />
+              </button>
+            </div>
+          )}
           {filteredBooks.map((book) => (
             <button className="grid-cover-button" type="button" key={book.id} onClick={() => openRoom(book)} aria-label={`查看《${book.title}》的书籍档案`}>
               <BookCover book={book} />

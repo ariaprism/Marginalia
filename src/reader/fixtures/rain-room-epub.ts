@@ -140,6 +140,7 @@ function buildContentOpf(chapters: RainRoomChapter[]): string {
     <dc:title>雨夜书房</dc:title>
     <dc:creator>小G</dc:creator>
     <dc:language>zh-CN</dc:language>
+    <dc:description>一座只在雨夜出现的旧书房，替迟迟没有说出口的人，保存那些被折起来的句子。</dc:description>
   </metadata>
   <manifest>
     <item id="toc" href="toc.xhtml" media-type="application/xhtml+xml" properties="nav"/>

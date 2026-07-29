@@ -10,6 +10,7 @@ describe('epubParser', () => {
     expect(epub.metadata.title).toBe('雨夜书房')
     expect(epub.metadata.author).toBe('小G')
     expect(epub.metadata.language).toBe('zh-CN')
+    expect(epub.metadata.description).toContain('一座只在雨夜出现的旧书房')
 
     expect(epub.toc).toHaveLength(rainRoomChapters.length)
     expect(epub.toc[0].label).toBe('雨先抵达')

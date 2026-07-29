@@ -26,6 +26,10 @@ export type ParsedEpub = {
   metadata: EpubMetadata
   toc: EpubTocItem[]
   chapters: EpubChapter[]
+  cover?: {
+    bytes: Uint8Array
+    mediaType: string
+  }
 }
 
 function decodeText(bytes: Uint8Array): string {
@@ -87,6 +91,10 @@ function parseContentOpf(opfXml: string) {
     .map((itemref) => itemref.getAttribute('idref'))
     .filter((idref): idref is string => Boolean(idref))
 
+  const coverId = childrenByLocalName(doc, 'meta')
+    .find((meta) => meta.getAttribute('name')?.toLowerCase() === 'cover')
+    ?.getAttribute('content') ?? undefined
+
   return {
     title: textOfFirst(doc, 'title'),
     author: textOfFirst(doc, 'creator'),
@@ -95,6 +103,7 @@ function parseContentOpf(opfXml: string) {
     description: textOfFirst(doc, 'description') || undefined,
     manifest,
     spine,
+    coverId,
   }
 }
 
@@ -226,6 +235,25 @@ export async function parseEpub(input: ArrayBuffer | Uint8Array): Promise<Parsed
     chapters.push({ id: idref, index, title, href: item.href, html })
   }
 
+  const manifestItems = Array.from(opf.manifest.values())
+  const coverItem = manifestItems.find((item) =>
+    item.properties.split(/\s+/).includes('cover-image'))
+    ?? (opf.coverId ? opf.manifest.get(opf.coverId) : undefined)
+    ?? manifestItems.find((item) =>
+      item.mediaType.startsWith('image/')
+      && (item.id.toLowerCase() === 'cover' || /(?:^|[/_.-])cover(?:[/_.-]|$)/i.test(item.href)))
+
+  let cover: ParsedEpub['cover']
+  if (coverItem) {
+    const coverFile = zip.file(resolvePath(opfDir, coverItem.href))
+    if (coverFile) {
+      cover = {
+        bytes: await coverFile.async('uint8array'),
+        mediaType: coverItem.mediaType || 'image/jpeg',
+      }
+    }
+  }
+
   return {
     metadata: {
       title: opf.title,
@@ -236,5 +264,6 @@ export async function parseEpub(input: ArrayBuffer | Uint8Array): Promise<Parsed
     },
     toc,
     chapters,
+    cover,
   }
 }

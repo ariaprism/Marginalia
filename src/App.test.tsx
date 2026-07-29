@@ -1,19 +1,129 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import App from './App'
-import { buildRainRoomEpub } from './reader/fixtures/rain-room-epub'
+import {
+  getAllBooks,
+  getBook,
+  getChapters,
+  getReadingProgress,
+  saveBook,
+  saveChapters,
+} from './data/local/bookStore'
+import { seedSampleTraces } from './data/local/seedSampleTraces'
+import { createBook, type BookStatus } from './domain/book'
+import { buildRainRoomEpub, rainRoomChapters } from './reader/fixtures/rain-room-epub'
+
+async function openImportDraft(file: File) {
+  fireEvent.click(screen.getByRole('button', { name: '藏入书籍' }))
+  const input = screen.getByLabelText('选择 EPUB 文件') as HTMLInputElement
+  Object.defineProperty(input, 'files', { value: [file], configurable: true })
+  fireEvent.change(input)
+  await screen.findByDisplayValue('雨夜书房')
+}
+
+async function seedTestBook({
+  id = 'rain-room',
+  title = '雨夜书房',
+  status = 'reading',
+  withTraces = false,
+}: {
+  id?: string
+  title?: string
+  status?: BookStatus
+  withTraces?: boolean
+} = {}) {
+  await saveBook(createBook({
+    id,
+    title,
+    englishTitle: title === '雨夜书房' ? 'The Library After Rain' : undefined,
+    author: '小G · 著',
+    description: '一座只在雨夜出现的旧书房，替迟迟没有说出口的人，保存那些被折起来的句子。',
+    coverTone: status === 'finished' ? 'green' : 'rose',
+    source: 'marginalia',
+    status,
+  }))
+  await saveChapters(id, rainRoomChapters.map((chapter) => ({
+    id: `${id}-chapter-${chapter.index}`,
+    index: chapter.index,
+    title: chapter.title,
+    href: `chapter-${chapter.index}.xhtml`,
+    html: `<html><body>${chapter.paragraphs.map((paragraph) => `<p>${paragraph}</p>`).join('')}</body></html>`,
+  })))
+  if (withTraces) await seedSampleTraces(true)
+  return id
+}
+
+async function renderWithRainRoom(withTraces = false) {
+  await seedTestBook({ withTraces })
+  const result = render(<App />)
+  await screen.findByRole('button', { name: /打开《雨夜书房》/ })
+  return result
+}
+
+function mockPaginatedGeometry(targetText: string, targetPage: number) {
+  const width = 500
+  const rect = (left: number, rectWidth = 120): DOMRect => ({
+    x: left,
+    y: 100,
+    left,
+    right: left + rectWidth,
+    top: 100,
+    bottom: 124,
+    width: rectWidth,
+    height: 24,
+    toJSON: () => ({}),
+  })
+  const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+    .mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('reader-text-viewport') ? width : 0
+    })
+  const scrollWidth = vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get')
+    .mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('reader-flow') ? width * (targetPage + 2) : 0
+    })
+  const boundingRect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+    .mockImplementation(function (this: HTMLElement) {
+      if (this.matches('[data-chapter-index]')) {
+        return rect(Number(this.dataset.chapterIndex ?? 0) * width)
+      }
+      return rect(0, width)
+    })
+  const clientRects = vi.spyOn(HTMLElement.prototype, 'getClientRects')
+    .mockImplementation(function (this: HTMLElement) {
+      if (!this.classList.contains('sentence-unit')) return [] as unknown as DOMRectList
+      const chapter = Number(this.closest<HTMLElement>('[data-chapter-index]')?.dataset.chapterIndex ?? 0)
+      const left = this.textContent?.includes(targetText) ? targetPage * width : chapter * width
+      return [rect(left)] as unknown as DOMRectList
+    })
+
+  return () => {
+    clientWidth.mockRestore()
+    scrollWidth.mockRestore()
+    boundingRect.mockRestore()
+    clientRects.mockRestore()
+  }
+}
 
 describe('Marginalia visual prototype', () => {
-  it('opens a book room from the cover and continues into the reader', async () => {
+  it('starts with a real empty shelf instead of bundled preview books', async () => {
     render(<App />)
+
+    expect(await screen.findByText('书房还在等第一本书')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /查看《.+》的书籍档案/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '藏入第一本书' }))
+    expect(screen.getByRole('dialog', { name: '藏入书籍' })).toBeInTheDocument()
+  })
+
+  it('opens a book room from the cover and continues into the reader', async () => {
+    await renderWithRainRoom()
 
     expect(screen.getByText('在正文之外，我们相遇。')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '查看《雨夜书房》的书籍档案' }))
-    fireEvent.click(screen.getByRole('button', { name: /一座只在雨夜出现的旧书房.*展开/ }))
+    fireEvent.click(screen.getByRole('button', { name: '一座只在雨夜出现的旧书房，替迟迟没有说出口的人，保存那些被折起来的句子。' }))
     expect(screen.getByRole('dialog', { name: '雨夜书房' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '关闭完整简介' }))
 
-    fireEvent.click(await screen.findByRole('button', { name: /从这里继续/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /从头开始读|从这里继续/ }))
     expect(screen.getByRole('heading', { name: '雨先抵达' })).toBeInTheDocument()
     expect(screen.getByLabelText(/第 1 页，共/)).toBeInTheDocument()
   })
@@ -24,14 +134,22 @@ describe('Marginalia visual prototype', () => {
 
     render(<App />)
 
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement
-    Object.defineProperty(input, 'files', { value: [file], configurable: true })
-    fireEvent.change(input)
+    await openImportDraft(file)
+    expect(screen.getByDisplayValue('小G')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(/英文名/), { target: { value: 'The Library After Rain' } })
+    fireEvent.change(screen.getByLabelText(/简介/), { target: { value: '从 EPUB 来，也可以由小狐狸修改。' } })
+    fireEvent.click(screen.getByRole('button', { name: '选择雾蓝封面' }))
+    expect(screen.getByRole('button', { name: '选择雾蓝封面' })).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByRole('button', { name: '藏入书架' }))
 
     await waitFor(() => expect(screen.getByText('已经藏入书架。')).toBeInTheDocument())
 
-    // 导入后书架增加一条真书条目（进度0，aria-label 以「打开」开头）。
-    const importedRow = await screen.findByRole('button', { name: /^打开《雨夜书房》/ })
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: /^打开《雨夜书房》/ })).toHaveLength(1)
+    })
+    const importedRows = screen.getAllByRole('button', { name: /^打开《雨夜书房》/ })
+    const importedRow = importedRows[0]
+    expect(importedRow.closest('article')?.querySelector('.book-cover')).toHaveClass('cover-blue')
     fireEvent.click(importedRow)
 
     // 正文来自 IndexedDB 里解析出的 XHTML，而不是内置示例数据。
@@ -40,23 +158,17 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByLabelText(/第 1 页，共/)).toBeInTheDocument()
   })
 
-  it('keeps the sample book traces out of an imported book', async () => {
+  it('starts an imported book without preloaded sample traces', async () => {
     const bytes = await buildRainRoomEpub()
     const file = new File([bytes.buffer as ArrayBuffer], '导入的书.epub', { type: 'application/epub+zip' })
 
     render(<App />)
 
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement
-    Object.defineProperty(input, 'files', { value: [file], configurable: true })
-    fireEvent.change(input)
+    await openImportDraft(file)
+    fireEvent.click(screen.getByRole('button', { name: '藏入书架' }))
     await waitFor(() => expect(screen.getByText('已经藏入书架。')).toBeInTheDocument())
 
-    // 进入导入书的书房：示例书排在前面，导入的那本在后面。
-    // 「藏入书架」的提示比书架重新载完早一步，所以要等到两本都在了再点第二本。
-    await waitFor(async () => {
-      expect(await screen.findAllByRole('button', { name: /查看《雨夜书房》的书籍档案/ })).toHaveLength(2)
-    })
-    const importedCover = screen.getAllByRole('button', { name: /查看《雨夜书房》的书籍档案/ })[1]
+    const importedCover = await screen.findByRole('button', { name: /查看《雨夜书房》的书籍档案/ })
     fireEvent.click(importedCover)
 
     await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: '章节与痕迹' })).toBeInTheDocument())
@@ -72,11 +184,32 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByText('这本书还没有留下痕迹。')).toBeInTheDocument()
   })
 
-  it('keeps a highlight and its note after the app is reloaded', async () => {
-    const { unmount } = render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: /继续阅读《雨夜书房》/ }))
+  it('does not save a parsed EPUB until the import dialog is confirmed', async () => {
+    const bytes = await buildRainRoomEpub()
+    const file = new File([bytes.buffer as ArrayBuffer], '暂不藏入.epub', { type: 'application/epub+zip' })
+    render(<App />)
 
-    const sentence = screen.getByText('灯亮起来以前，书房先听见了雨。')
+    await openImportDraft(file)
+    expect(screen.getByRole('region', { name: '书籍预览' })).toBeInTheDocument()
+    const cover = new File(['tiny-cover'], 'cover.png', { type: 'image/png' })
+    const coverInput = screen.getByLabelText('导入封面图片') as HTMLInputElement
+    Object.defineProperty(coverInput, 'files', { value: [cover], configurable: true })
+    fireEvent.change(coverInput)
+    await waitFor(() => expect((document.querySelector('.import-preview .cover-image') as HTMLImageElement).src).toContain('data:image/png'))
+    fireEvent.click(screen.getByRole('button', { name: '选择赭黄封面' }))
+    expect(document.querySelector('.import-preview .cover-image')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '暂不藏入' }))
+
+    expect(screen.queryByRole('dialog', { name: '藏入书籍' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^打开《雨夜书房》/ })).not.toBeInTheDocument()
+    expect(await screen.findByText('书房还在等第一本书')).toBeInTheDocument()
+  })
+
+  it('keeps a highlight and its note after the app is reloaded', async () => {
+    const { unmount } = await renderWithRainRoom()
+    fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》|继续阅读《雨夜书房》/ }))
+
+    const sentence = await screen.findByText('灯亮起来以前，书房先听见了雨。')
     fireEvent.click(sentence)
     fireEvent.click(screen.getByRole('button', { name: '划线' }))
     await waitFor(() => expect(sentence).toHaveClass('has-user-highlight'))
@@ -90,7 +223,6 @@ describe('Marginalia visual prototype', () => {
     // 关掉整个应用再打开，等价于刷新页面：痕迹只能从 IndexedDB 回来。
     unmount()
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: /继续阅读《雨夜书房》/ }))
 
     const reloaded = await screen.findByText('灯亮起来以前，书房先听见了雨。')
     await waitFor(() => expect(reloaded).toHaveClass('has-user-highlight'))
@@ -99,27 +231,224 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByText(/这一句要留到下次打开/)).toBeInTheDocument()
   })
 
-  it('filters the mobile-friendly shelf', () => {
+  it('filters the mobile-friendly shelf', async () => {
+    await seedTestBook()
+    await seedTestBook({ id: 'winter-greenhouse', title: '玻璃温室里的冬天', status: 'finished' })
     render(<App />)
+    await screen.findByText('玻璃温室里的冬天')
     fireEvent.click(screen.getByRole('button', { name: /已读完/ }))
-    expect(screen.getAllByText('玻璃温室里的冬天')).toHaveLength(2)
+    expect(screen.getByText('玻璃温室里的冬天')).toBeInTheDocument()
     expect(screen.queryByText('雨夜书房')).not.toBeInTheDocument()
   })
 
-  it('toggles between the detailed list and the three-column cover shelf', () => {
-    render(<App />)
-    expect(screen.getAllByText('雨夜书房')).toHaveLength(2)
+  it('toggles between the detailed list and the three-column cover shelf', async () => {
+    await renderWithRainRoom()
+    expect(screen.getByText('雨夜书房')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '切换为封面书架' }))
 
     expect(screen.getByRole('region', { name: '封面书架' })).toBeInTheDocument()
-    expect(screen.getAllByText('雨夜书房')).toHaveLength(1)
+    expect(screen.queryByText('雨夜书房')).not.toBeInTheDocument()
+    expect(screen.getByText('雨夜')).toBeInTheDocument()
+    expect(screen.getByText('书房')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '切换为列表书架' })).toBeInTheDocument()
   })
 
-  it('applies the selected reading typeface to the paginated text', () => {
+  it('keeps the calling cards in the sidebar while the title toggles the shelf', () => {
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: /继续阅读《雨夜书房》/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: '打开侧边栏' }))
+    expect(screen.getByRole('heading', { name: '名帖' })).toBeInTheDocument()
+    expect(screen.getByLabelText('我的落款')).toHaveValue('小狐狸')
+    expect(screen.getByLabelText('共读者的名字')).toHaveValue('小鱼')
+
+    fireEvent.change(screen.getByLabelText('我的落款'), { target: { value: '阿狐' } })
+    fireEvent.change(screen.getByLabelText('共读者的名字'), { target: { value: '小鲸' } })
+    fireEvent.change(screen.getByLabelText('如何称呼共读者'), { target: { value: '他' } })
+    expect(screen.getByText('他来过时，留下的文字会以这个名字落款。')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭侧边栏面板' }))
+    expect(screen.queryByRole('complementary', { name: '侧边栏' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开侧边栏' }))
+    expect(screen.getByLabelText('我的落款')).toHaveValue('阿狐')
+    expect(screen.getByLabelText('共读者的名字')).toHaveValue('小鲸')
+    fireEvent.click(screen.getByRole('button', { name: '关闭侧边栏面板' }))
+
+    fireEvent.click(screen.getByRole('button', { name: '切换为封面书架' }))
+    expect(screen.getByRole('region', { name: '封面书架' })).toBeInTheDocument()
+  })
+
+  it('moves the most recently opened book to the top of the shelf', async () => {
+    await seedTestBook()
+    await seedTestBook({ id: 'light-index', title: '光的索引' })
+    const { unmount } = render(<App />)
+    await screen.findByRole('button', { name: '查看《光的索引》的书籍档案' })
+    fireEvent.click(screen.getByRole('button', { name: '查看《光的索引》的书籍档案' }))
+    fireEvent.click(screen.getByRole('button', { name: '返回书架' }))
+
+    expect(screen.getAllByRole('button', { name: /查看《.+》的书籍档案/ })[0]).toHaveAccessibleName('查看《光的索引》的书籍档案')
+
+    unmount()
+    render(<App />)
+    expect((await screen.findAllByRole('button', { name: /查看《.+》的书籍档案/ }))[0]).toHaveAccessibleName('查看《光的索引》的书籍档案')
+  })
+
+  it('removes an imported book and its parsed chapters from the local room', async () => {
+    const bytes = await buildRainRoomEpub()
+    const file = new File([bytes.buffer as ArrayBuffer], '待移出的书.epub', { type: 'application/epub+zip' })
+    render(<App />)
+
+    await openImportDraft(file)
+    fireEvent.change(screen.getByLabelText('书名'), { target: { value: '待移出的书' } })
+    fireEvent.click(screen.getByRole('button', { name: '藏入书架' }))
+    await screen.findByText('已经藏入书架。')
+    await waitFor(() => expect(screen.getByRole('button', { name: '查看《待移出的书》的书籍档案' })).toBeInTheDocument())
+
+    const [stored] = await getAllBooks()
+    fireEvent.click(screen.getByRole('button', { name: '查看《待移出的书》的书籍档案' }))
+    fireEvent.click(screen.getByRole('button', { name: '管理这本书' }))
+    fireEvent.click(screen.getByRole('button', { name: '收起书籍操作' }))
+    expect(screen.queryByRole('menuitem', { name: '移出书房' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '管理这本书' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '移出书房' }))
+    expect(screen.getByRole('dialog', { name: '移出《待移出的书》？' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '确认移出' }))
+
+    expect(await screen.findByText('《待移出的书》已经移出书房。')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看《待移出的书》的书籍档案' })).not.toBeInTheDocument()
+    expect(await getBook(stored.id)).toBeUndefined()
+    expect(await getChapters(stored.id)).toEqual([])
+  })
+
+  it('keeps a movable fold separate from temporary chapter jumps', async () => {
+    const { unmount } = await renderWithRainRoom()
+    fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》/ }))
+    await waitFor(() => expect(screen.queryByLabelText('正在打开书籍')).not.toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: '在这里折页' }))
+    expect(await screen.findByText('这一页已经折好。')).toBeInTheDocument()
+    const firstBookmarkButton = screen.getByRole('button', { name: '打开折页' })
+    expect(firstBookmarkButton).toHaveClass('has-bookmark')
+    expect(getComputedStyle(firstBookmarkButton.querySelector('svg')!).fill).not.toBe('')
+    await waitFor(async () => {
+      const progress = await getReadingProgress('rain-room')
+      expect(progress?.locator.position.chapterIndex).toBe(0)
+      expect(progress?.bookmark?.locator.position.chapterIndex).toBe(0)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '目录' }))
+    fireEvent.click(screen.getByRole('button', { name: /没有寄出的页码/ }))
+
+    // 目录跳转只是临时翻看，在新位置继续翻页或交互前不能覆盖自动位置。
+    expect((await getReadingProgress('rain-room'))?.locator.position.chapterIndex).toBe(0)
+
+    fireEvent.click(screen.getByRole('article'))
+    fireEvent.click(screen.getByRole('button', { name: '打开折页' }))
+    expect(screen.getByRole('button', { name: '回到原折' })).toBeInTheDocument()
+
+    // 点书页空白处时，折页菜单与顶栏应作为同一层界面一起收回。
+    fireEvent.click(screen.getByRole('article'))
+    expect(screen.queryByRole('button', { name: '回到原折' })).not.toBeInTheDocument()
+    expect(document.querySelector('.reader-topbar')).not.toHaveClass('is-visible')
+
+    fireEvent.click(screen.getByRole('article'))
+    fireEvent.click(screen.getByRole('button', { name: '打开折页' }))
+    fireEvent.click(screen.getByRole('button', { name: '移折至此' }))
+    expect(screen.getByRole('button', { name: '打开折页' })).toHaveClass('has-bookmark')
+
+    await waitFor(async () => {
+      const progress = await getReadingProgress('rain-room')
+      expect(progress?.locator.position.chapterIndex).toBe(1)
+      expect(progress?.bookmark?.locator.position.chapterIndex).toBe(1)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '返回书架' }))
+    expect(await screen.findByText('上次读到 · 第 2 章')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '继续阅读《雨夜书房》' })).toBeInTheDocument()
+
+    unmount()
+    render(<App />)
+    expect(await screen.findByText('上次读到 · 第 2 章')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '继续阅读《雨夜书房》' }))
+    await waitFor(() => expect(screen.queryByLabelText('正在打开书籍')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: '打开折页' })).toBeInTheDocument()
+  })
+
+  it('opens a room trace on the dynamic page containing its sentence', async () => {
+    const restoreGeometry = mockPaginatedGeometry('句子需要重量', 4)
+    try {
+      await renderWithRainRoom(true)
+      fireEvent.click(screen.getByRole('button', { name: '查看《雨夜书房》的书籍档案' }))
+      await screen.findByText(/有些话打在屏幕上很轻/)
+      const traceButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.room-trace-list button'))
+        .find((button) => button.textContent?.includes('句子需要重量'))
+      fireEvent.click(traceButton!)
+
+      await waitFor(() => expect(screen.getByLabelText('第 5 页，共 6 页')).toBeInTheDocument())
+    } finally {
+      restoreGeometry()
+    }
+  })
+
+  it('opens a page-edge trace on the dynamic page containing its sentence', async () => {
+    const restoreGeometry = mockPaginatedGeometry('句子需要重量', 4)
+    try {
+      await renderWithRainRoom(true)
+      fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》/ }))
+      await waitFor(() => expect(document.querySelector('.has-user-highlight')).toBeInTheDocument())
+
+      fireEvent.click(screen.getByRole('article'), { clientX: 250 })
+      fireEvent.click(screen.getByRole('button', { name: '页边痕迹' }))
+      const traceButton = Array.from(document.querySelectorAll<HTMLButtonElement>('.trace-list button'))
+        .find((button) => button.textContent?.includes('句子需要重量'))
+      fireEvent.click(traceButton!)
+
+      expect(screen.getByLabelText('第 5 页，共 6 页')).toBeInTheDocument()
+    } finally {
+      restoreGeometry()
+    }
+  })
+
+  it('restores the reader screen after the browser remounts the page', async () => {
+    const { unmount } = await renderWithRainRoom()
+    fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》/ }))
+    await waitFor(() => expect(screen.queryByLabelText('正在打开书籍')).not.toBeInTheDocument())
+    await waitFor(() => {
+      expect(window.localStorage.getItem('marginalia:last-view')).toContain('"screen":"reader"')
+    })
+
+    unmount()
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: '返回书架' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByLabelText('正在打开书籍')).not.toBeInTheDocument())
+    expect(screen.getByRole('heading', { name: '雨先抵达' })).toBeInTheDocument()
+  })
+
+  it('uses the mobile-compatible copy fallback for an excerpt', async () => {
+    const originalSecureContext = window.isSecureContext
+    const originalExecCommand = document.execCommand
+    Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true })
+    Object.defineProperty(document, 'execCommand', { value: vi.fn(() => true), configurable: true })
+
+    try {
+      await renderWithRainRoom()
+      fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》|继续阅读《雨夜书房》/ }))
+      fireEvent.click(await screen.findByText('灯亮起来以前，书房先听见了雨。'))
+      fireEvent.click(screen.getByRole('button', { name: '摘录' }))
+
+      expect(document.execCommand).toHaveBeenCalledWith('copy')
+      expect(await screen.findByText('已复制。')).toBeInTheDocument()
+    } finally {
+      Object.defineProperty(window, 'isSecureContext', { value: originalSecureContext, configurable: true })
+      Object.defineProperty(document, 'execCommand', { value: originalExecCommand, configurable: true })
+    }
+  })
+
+  it('applies the selected reading typeface to the paginated text', async () => {
+    await renderWithRainRoom()
+    fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》|继续阅读《雨夜书房》/ }))
     fireEvent.click(screen.getByRole('button', { name: '排版设置' }))
 
     fireEvent.change(screen.getByRole('combobox', { name: '字体' }), { target: { value: 'sans' } })
@@ -127,35 +456,31 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByRole('article')).toHaveStyle({ '--reader-font-family': 'var(--font-reading-sans)' })
   })
 
-  it('shows a quiet trace card without chapter chrome or footer actions', async () => {
-    render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: /继续阅读《雨夜书房》/ }))
-    // 预置痕迹是启动时播种进 IndexedDB 的，要等它读回来才有批注可看。
-    await waitFor(() => expect(document.querySelector('.has-user-highlight')).toBeInTheDocument())
-    fireEvent.click(screen.getByText('句子需要重量'))
+  it('uses the requested reading layout defaults', async () => {
+    await renderWithRainRoom()
+    fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》|继续阅读《雨夜书房》/ }))
 
-    const dialog = screen.getByRole('dialog', { name: '划线详情' })
-    expect(dialog).toHaveStyle({ '--trace-font-family': 'var(--font-reading-serif)' })
-    expect(dialog.querySelector('.trace-line-highlight')).toBeInTheDocument()
-    expect(within(dialog).getByText('07/14/18：47')).toBeInTheDocument()
-    expect(within(dialog).queryByRole('button', { name: '关闭划线详情' })).not.toBeInTheDocument()
-    expect(within(dialog).queryByRole('button', { name: '更换颜色' })).not.toBeInTheDocument()
+    expect(screen.getByRole('article')).toHaveStyle({
+      '--reader-font-size': '19px',
+      '--reader-line-height': '1.8',
+      '--reader-margin': '8%',
+    })
+  })
 
-    fireEvent.click(within(dialog).getByRole('button', { name: /批注操作/ }))
-    expect(within(dialog).getByRole('button', { name: '修订' })).toBeInTheDocument()
-    fireEvent.click(within(dialog).getByRole('button', { name: '修订' }))
-    const reviseDialog = screen.getByRole('dialog', { name: '重温批注' })
-    expect(reviseDialog).toHaveStyle({ '--trace-font-family': 'var(--font-reading-serif)' })
-    expect(reviseDialog.querySelector('.note-quote .trace-line-highlight')).toBeInTheDocument()
-    fireEvent.click(document.querySelector('.note-backdrop') as HTMLElement)
-    expect(screen.queryByRole('dialog', { name: '重温批注' })).not.toBeInTheDocument()
+  it('keeps the companion-note presentation in the explicit test fixture only', async () => {
+    await renderWithRainRoom(true)
+    fireEvent.click(screen.getByRole('button', { name: '查看《雨夜书房》的书籍档案' }))
+
+    const companionNote = await screen.findByText(/也许书并不知道，只是它替那一刻保留了一个位置/)
+    expect(companionNote).toHaveClass('fish-note')
+    expect(within(companionNote).getByText('小鱼')).toBeInTheDocument()
   })
 
   it('selects and extends a contiguous sentence range', async () => {
-    render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: /继续阅读《雨夜书房》/ }))
-    const firstSentence = screen.getByText('灯亮起来以前，书房先听见了雨。')
-    const secondSentence = screen.getByText('它从屋檐最北边的一片瓦开始，沿着看不见的坡度慢慢走下来，敲过窗框，最后停在门前那块颜色较深的木头上。')
+    await renderWithRainRoom()
+    fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》|继续阅读《雨夜书房》/ }))
+    const firstSentence = await screen.findByText('灯亮起来以前，书房先听见了雨。')
+    const secondSentence = await screen.findByText('它从屋檐最北边的一片瓦开始，沿着看不见的坡度慢慢走下来，敲过窗框，最后停在门前那块颜色较深的木头上。')
 
     fireEvent.click(firstSentence)
     expect(firstSentence).toHaveClass('is-selected')
