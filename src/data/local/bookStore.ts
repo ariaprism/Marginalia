@@ -33,7 +33,11 @@ export async function getAllBooks(): Promise<Book[]> {
   return withTransaction('books', 'readonly', (store) => store.getAll())
 }
 
-export async function touchBook(bookId: string, now = new Date().toISOString()): Promise<Book | undefined> {
+export async function touchBook(
+  bookId: string,
+  now = new Date().toISOString(),
+  status?: Book['status'],
+): Promise<Book | undefined> {
   const db = await openMarginaliaDB()
   return new Promise((resolve, reject) => {
     const transaction = db.transaction('books', 'readwrite')
@@ -43,12 +47,58 @@ export async function touchBook(bookId: string, now = new Date().toISOString()):
     request.onsuccess = () => {
       const book = request.result as Book | undefined
       if (!book) return
-      touched = { ...book, lastOpenedAt: now, updatedAt: now }
+      touched = { ...book, lastOpenedAt: now, status: status ?? book.status, updatedAt: now }
       store.put(touched)
     }
     transaction.oncomplete = () => resolve(touched)
     transaction.onerror = () => reject(transaction.error)
     transaction.onabort = () => reject(transaction.error ?? new Error('记录最近打开时间的事务已中止'))
+  })
+}
+
+export async function setBookPinned(
+  bookId: string,
+  pinned: boolean,
+  now = new Date().toISOString(),
+): Promise<Book | undefined> {
+  const db = await openMarginaliaDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('books', 'readwrite')
+    const store = transaction.objectStore('books')
+    const request = store.get(bookId)
+    let updated: Book | undefined
+    request.onsuccess = () => {
+      const book = request.result as Book | undefined
+      if (!book) return
+      updated = { ...book, pinnedAt: pinned ? now : undefined, updatedAt: now }
+      store.put(updated)
+    }
+    transaction.oncomplete = () => resolve(updated)
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(transaction.error ?? new Error('更新书籍置顶状态的事务已中止'))
+  })
+}
+
+export async function setBookStatus(
+  bookId: string,
+  status: Book['status'],
+  now = new Date().toISOString(),
+): Promise<Book | undefined> {
+  const db = await openMarginaliaDB()
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('books', 'readwrite')
+    const store = transaction.objectStore('books')
+    const request = store.get(bookId)
+    let updated: Book | undefined
+    request.onsuccess = () => {
+      const book = request.result as Book | undefined
+      if (!book) return
+      updated = { ...book, status, updatedAt: now }
+      store.put(updated)
+    }
+    transaction.oncomplete = () => resolve(updated)
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(transaction.error ?? new Error('更新书籍阅读状态的事务已中止'))
   })
 }
 

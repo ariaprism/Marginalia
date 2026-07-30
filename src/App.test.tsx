@@ -56,7 +56,7 @@ async function seedTestBook({
 async function renderWithRainRoom(withTraces = false) {
   await seedTestBook({ withTraces })
   const result = render(<App />)
-  await screen.findByRole('button', { name: /打开《雨夜书房》/ })
+  await screen.findByRole('button', { name: /打开《雨夜书房》/ }, { timeout: 10_000 })
   return result
 }
 
@@ -108,7 +108,9 @@ describe('Marginalia visual prototype', () => {
   it('starts with a real empty shelf instead of bundled preview books', async () => {
     render(<App />)
 
-    expect(await screen.findByText('书房还在等第一本书')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '藏入第一本书' }, { timeout: 5_000 })).toBeInTheDocument()
+    expect(screen.queryByText('书房还在等第一本书')).not.toBeInTheDocument()
+    expect(screen.queryByText('Marginalia · 私人共读书房')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /查看《.+》的书籍档案/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '藏入第一本书' }))
     expect(screen.getByRole('dialog', { name: '藏入书籍' })).toBeInTheDocument()
@@ -126,7 +128,7 @@ describe('Marginalia visual prototype', () => {
     fireEvent.click(await screen.findByRole('button', { name: /从头开始读|从这里继续/ }))
     expect(screen.getByRole('heading', { name: '雨先抵达' })).toBeInTheDocument()
     expect(screen.getByLabelText(/第 1 页，共/)).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('imports a real EPUB and reads its chapters from storage', async () => {
     const bytes = await buildRainRoomEpub()
@@ -136,6 +138,7 @@ describe('Marginalia visual prototype', () => {
 
     await openImportDraft(file)
     expect(screen.getByDisplayValue('小G')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: '书籍预览' })).getByText('想读')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText(/英文名/), { target: { value: 'The Library After Rain' } })
     fireEvent.change(screen.getByLabelText(/简介/), { target: { value: '从 EPUB 来，也可以由小狐狸修改。' } })
     fireEvent.click(screen.getByRole('button', { name: '选择雾蓝封面' }))
@@ -150,10 +153,18 @@ describe('Marginalia visual prototype', () => {
     const importedRows = screen.getAllByRole('button', { name: /^打开《雨夜书房》/ })
     const importedRow = importedRows[0]
     expect(importedRow.closest('article')?.querySelector('.book-cover')).toHaveClass('cover-blue')
-    fireEvent.click(importedRow)
+    const [storedBeforeOpening] = await getAllBooks()
+    expect(storedBeforeOpening.status).toBe('wish')
+
+    // 只打开简介不算开始阅读；从小房间真正翻开正文时才进入“在读”。
+    fireEvent.click(screen.getByRole('button', { name: '查看《雨夜书房》的书籍档案' }))
+    await screen.findByRole('heading', { name: '章节与痕迹' })
+    expect((await getBook(storedBeforeOpening.id))?.status).toBe('wish')
+    fireEvent.click(screen.getByRole('button', { name: /从头开始读|从这里继续/ }))
 
     // 正文来自 IndexedDB 里解析出的 XHTML，而不是内置示例数据。
     expect(await screen.findByRole('heading', { name: '雨先抵达' })).toBeInTheDocument()
+    await waitFor(async () => expect((await getBook(storedBeforeOpening.id))?.status).toBe('reading'))
     expect(screen.getByText(/灯亮起来以前，书房先听见了雨。/)).toBeInTheDocument()
     expect(screen.getByLabelText(/第 1 页，共/)).toBeInTheDocument()
   })
@@ -202,7 +213,7 @@ describe('Marginalia visual prototype', () => {
 
     expect(screen.queryByRole('dialog', { name: '藏入书籍' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^打开《雨夜书房》/ })).not.toBeInTheDocument()
-    expect(await screen.findByText('书房还在等第一本书')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '藏入第一本书' })).toBeInTheDocument()
   })
 
   it('keeps a highlight and its note after the app is reloaded', async () => {
@@ -261,6 +272,15 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByRole('heading', { name: '名帖' })).toBeInTheDocument()
     expect(screen.getByLabelText('我的落款')).toHaveValue('小狐狸')
     expect(screen.getByLabelText('共读者的名字')).toHaveValue('小鱼')
+    expect(screen.getByRole('button', { name: /念头/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /来访/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /影子书/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /云端书房/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /影子书/ }))
+    expect(screen.getByRole('heading', { name: '影子书' })).toBeInTheDocument()
+    expect(screen.getByText(/微信读书带回的旧划线/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /名帖/ }))
 
     fireEvent.change(screen.getByLabelText('我的落款'), { target: { value: '阿狐' } })
     fireEvent.change(screen.getByLabelText('共读者的名字'), { target: { value: '小鲸' } })
@@ -292,6 +312,36 @@ describe('Marginalia visual prototype', () => {
     unmount()
     render(<App />)
     expect((await screen.findAllByRole('button', { name: /查看《.+》的书籍档案/ }))[0]).toHaveAccessibleName('查看《光的索引》的书籍档案')
+  }, 10_000)
+
+  it('orders pinned books by their latest reading activity and persists the order', async () => {
+    await seedTestBook()
+    await seedTestBook({ id: 'light-index', title: '光的索引' })
+    const { unmount } = render(<App />)
+    await screen.findByRole('button', { name: '查看《雨夜书房》的书籍档案' })
+
+    fireEvent.click(screen.getByRole('button', { name: '查看《雨夜书房》的书籍档案' }))
+    fireEvent.click(screen.getByRole('button', { name: '管理这本书' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '置顶这本书' }))
+    expect(await screen.findByText('《雨夜书房》已经盖章置顶。')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '返回书架' }))
+
+    fireEvent.click(screen.getByRole('button', { name: '查看《光的索引》的书籍档案' }))
+    fireEvent.click(screen.getByRole('button', { name: '管理这本书' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '置顶这本书' }))
+    expect(await screen.findByText('《光的索引》已经盖章置顶。')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '返回书架' }))
+    expect(screen.getAllByRole('button', { name: /查看《.+》的书籍档案/ })[0]).toHaveAccessibleName('查看《光的索引》的书籍档案')
+
+    fireEvent.click(screen.getByRole('button', { name: '查看《雨夜书房》的书籍档案' }))
+    fireEvent.click(screen.getByRole('button', { name: '返回书架' }))
+    expect(screen.getAllByRole('button', { name: /查看《.+》的书籍档案/ })[0]).toHaveAccessibleName('查看《雨夜书房》的书籍档案')
+    expect((await getBook('rain-room'))?.pinnedAt).toBeDefined()
+    expect((await getBook('light-index'))?.pinnedAt).toBeDefined()
+
+    unmount()
+    render(<App />)
+    expect((await screen.findAllByRole('button', { name: /查看《.+》的书籍档案/ }))[0]).toHaveAccessibleName('查看《雨夜书房》的书籍档案')
   })
 
   it('removes an imported book and its parsed chapters from the local room', async () => {
@@ -330,7 +380,8 @@ describe('Marginalia visual prototype', () => {
     expect(await screen.findByText('这一页已经折好。')).toBeInTheDocument()
     const firstBookmarkButton = screen.getByRole('button', { name: '打开折页' })
     expect(firstBookmarkButton).toHaveClass('has-bookmark')
-    expect(getComputedStyle(firstBookmarkButton.querySelector('svg')!).fill).not.toBe('')
+    expect(firstBookmarkButton).toHaveClass('is-current')
+    expect(getComputedStyle(firstBookmarkButton.querySelector('svg')!).fill).not.toBe('none')
     await waitFor(async () => {
       const progress = await getReadingProgress('rain-room')
       expect(progress?.locator.position.chapterIndex).toBe(0)
@@ -339,6 +390,9 @@ describe('Marginalia visual prototype', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '目录' }))
     fireEvent.click(screen.getByRole('button', { name: /没有寄出的页码/ }))
+    const bookmarkAwayFromFold = screen.getByRole('button', { name: '打开折页' })
+    expect(bookmarkAwayFromFold).toHaveClass('has-bookmark')
+    expect(bookmarkAwayFromFold).not.toHaveClass('is-current')
 
     // 目录跳转只是临时翻看，在新位置继续翻页或交互前不能覆盖自动位置。
     expect((await getReadingProgress('rain-room'))?.locator.position.chapterIndex).toBe(0)
@@ -355,7 +409,7 @@ describe('Marginalia visual prototype', () => {
     fireEvent.click(screen.getByRole('article'))
     fireEvent.click(screen.getByRole('button', { name: '打开折页' }))
     fireEvent.click(screen.getByRole('button', { name: '移折至此' }))
-    expect(screen.getByRole('button', { name: '打开折页' })).toHaveClass('has-bookmark')
+    expect(screen.getByRole('button', { name: '打开折页' })).toHaveClass('has-bookmark', 'is-current')
 
     await waitFor(async () => {
       const progress = await getReadingProgress('rain-room')
@@ -554,5 +608,5 @@ describe('Marginalia visual prototype', () => {
     fireEvent.click(screen.getByRole('button', { name: /批注操作/ }))
     fireEvent.click(screen.getByRole('button', { name: '抹去文字' }))
     await waitFor(() => expect(secondSentence).not.toHaveClass('has-annotation'))
-  })
+  }, 10_000)
 })

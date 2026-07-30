@@ -44,6 +44,7 @@ describe('importEpubFile', () => {
       author: '改过的作者',
       description: '改过的简介',
       coverTone: 'green',
+      status: 'wish',
     })
   })
 

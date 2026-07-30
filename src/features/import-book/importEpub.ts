@@ -113,7 +113,7 @@ export async function savePreparedEpub(
     coverUrl: details.coverUrl,
     coverTone: details.coverTone,
     source: 'marginalia',
-    status: 'reading',
+    status: 'wish',
   })
 
   try {

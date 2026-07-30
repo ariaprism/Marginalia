@@ -26,6 +26,8 @@ import {
   saveHighlight,
   saveMarginalia,
   saveReadingProgress,
+  setBookPinned,
+  setBookStatus,
   touchBook,
 } from './bookStore'
 
@@ -71,6 +73,42 @@ describe('bookStore', () => {
 
     expect((await getBook(book.id))?.lastOpenedAt).toBe('2026-07-29T08:00:00.000Z')
     expect((await getBook(book.id))?.updatedAt).toBe('2026-07-29T08:00:00.000Z')
+  })
+
+  it('moves a wished-for book into reading on its first正文 opening', async () => {
+    const book = { ...makeBook(), status: 'wish' as const }
+    await saveBook(book)
+    await touchBook(book.id, '2026-07-30T12:00:00.000Z', 'reading')
+
+    expect((await getBook(book.id))?.status).toBe('reading')
+  })
+
+  it('persists and clears a manual shelf pin', async () => {
+    const book = makeBook()
+    await saveBook(book)
+    await setBookPinned(book.id, true, '2026-07-30T09:00:00.000Z')
+
+    expect((await getBook(book.id))?.pinnedAt).toBe('2026-07-30T09:00:00.000Z')
+
+    await setBookPinned(book.id, false, '2026-07-30T09:05:00.000Z')
+    const unpinned = await getBook(book.id)
+    expect(unpinned?.pinnedAt).toBeUndefined()
+    expect(unpinned?.updatedAt).toBe('2026-07-30T09:05:00.000Z')
+  })
+
+  it('changes reading status without disturbing pin or recent opening', async () => {
+    const book = {
+      ...makeBook(),
+      pinnedAt: '2026-07-30T08:00:00.000Z',
+      lastOpenedAt: '2026-07-30T08:30:00.000Z',
+    }
+    await saveBook(book)
+    await setBookStatus(book.id, 'finished', '2026-07-30T09:00:00.000Z')
+
+    const finished = await getBook(book.id)
+    expect(finished?.status).toBe('finished')
+    expect(finished?.pinnedAt).toBe(book.pinnedAt)
+    expect(finished?.lastOpenedAt).toBe(book.lastOpenedAt)
   })
 
   it('saves and retrieves chapters in order', async () => {

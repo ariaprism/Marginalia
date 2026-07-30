@@ -21,6 +21,8 @@ export type Book = {
   addedAt: string
   /** 最近一次由用户主动打开书籍的时间，用于书架排序。 */
   lastOpenedAt?: string
+  /** 用户手动置顶的时间；存在时固定排在普通书籍之前。 */
+  pinnedAt?: string
   updatedAt: string
 }
 

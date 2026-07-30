@@ -5,13 +5,18 @@ import {
   BookOpenText,
   Check,
   ChevronRight,
+  Cloud,
   Copy,
   CornerUpLeft,
+  Feather,
+  Fish,
   Highlighter,
   ImagePlus,
+  LibraryBig,
   ListTree,
   MessageSquareText,
   MoreHorizontal,
+  Pin,
   Plus,
   SquarePen,
   SunMoon,
@@ -33,6 +38,8 @@ import {
   getAllReadingProgress,
   getReadingProgress,
   saveReadingProgress,
+  setBookPinned,
+  setBookStatus,
   touchBook,
 } from './data/local/bookStore'
 import {
@@ -76,6 +83,7 @@ type ReaderTypeface = 'serif' | 'sans'
 type ShelfView = 'list' | 'covers'
 type Screen = 'shelf' | 'room' | 'reader'
 type BookStatus = Exclude<ShelfFilter, 'all'>
+type SidebarSection = 'calling-card' | 'thoughts' | 'visits' | 'shadow-books' | 'cloud'
 
 type Book = {
   id: string
@@ -91,6 +99,7 @@ type Book = {
   tone: BookCoverTone
   coverUrl?: string
   lastOpenedAt?: string
+  pinnedAt?: string
 }
 
 type ImportDraft = {
@@ -308,11 +317,11 @@ function BrandHeader({
   return (
     <header className="shelf-header">
       <div className="brand-lockup">
-        <button className="brand-seal-button" type="button" onClick={onOpenSidebar} aria-label="打开侧边栏" title="打开侧边栏">
-          <span className="brand-flourish" aria-hidden="true">
-            <span className="seal-curve seal-curve-outer" />
-            <span className="seal-curve seal-curve-inner" />
-            <i>M</i>
+        <button className="shelf-menu-button" type="button" onClick={onOpenSidebar} aria-label="打开侧边栏" title="打开侧边栏">
+          <span className="shelf-menu-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
           </span>
         </button>
         <div className="brand-copy">
@@ -330,6 +339,16 @@ function BrandHeader({
       </div>
       {onOpenImport && <ImportBookControl onOpen={onOpenImport} />}
     </header>
+  )
+}
+
+function PinnedBookSeal() {
+  return (
+    <span className="pinned-book-seal" aria-hidden="true">
+      <span className="seal-curve seal-curve-outer" />
+      <span className="seal-curve seal-curve-inner" />
+      <i>M</i>
+    </span>
   )
 }
 
@@ -371,8 +390,11 @@ function App() {
   const [screen, setScreen] = useState<Screen>('shelf')
   const [shelfView, setShelfView] = useState<ShelfView>('list')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarSection, setSidebarSection] = useState<SidebarSection>('calling-card')
   const [callingCard, setCallingCard] = useState<CallingCard>(readCallingCard)
   const [bookRecency, setBookRecency] = useState<Record<string, string>>(readBookRecency)
+  const [bookPinOverrides, setBookPinOverrides] = useState<Record<string, string | null>>({})
+  const [bookStatusOverrides, setBookStatusOverrides] = useState<Record<string, BookStatus>>({})
   const [removedBookIds, setRemovedBookIds] = useState<Set<string>>(() => new Set())
   const [roomBook, setRoomBook] = useState<Book>(EMPTY_ROOM_BOOK)
   const [roomMenuOpen, setRoomMenuOpen] = useState(false)
@@ -412,6 +434,8 @@ function App() {
   const [bookmarkPage, setBookmarkPage] = useState<number | null>(null)
   const [bookmarkMenuOpen, setBookmarkMenuOpen] = useState(false)
   const [bookmarkReminderVisible, setBookmarkReminderVisible] = useState(false)
+  const [endSlipPhase, setEndSlipPhase] = useState<'open' | 'closing' | null>(null)
+  const [finishingBook, setFinishingBook] = useState(false)
   const [descriptionOpen, setDescriptionOpen] = useState(false)
   const [toast, setToast] = useState<{ message: string; details?: string } | null>(null)
   const [importKey, setImportKey] = useState(0)
@@ -431,6 +455,8 @@ function App() {
   const progressWriteRef = useRef(Promise.resolve())
   const bookTouchWriteRef = useRef(Promise.resolve())
   const importSessionRef = useRef(0)
+  const longPressTimerRef = useRef<number | null>(null)
+  const longPressTriggeredRef = useRef<string | null>(null)
   const bookRecencyClockRef = useRef(Math.max(
     0,
     ...Object.values(bookRecency).map((timestamp) => Date.parse(timestamp) || 0),
@@ -470,16 +496,21 @@ function App() {
       title: domainBook.title,
       englishTitle: domainBook.englishTitle ?? '',
       author: domainBook.author,
-      status: domainBook.status as BookStatus,
-      statusLabel: domainBook.status === 'reading' ? '在读' : domainBook.status === 'wish' ? '想读' : '已读完',
+      status: bookStatusOverrides[domainBook.id] ?? domainBook.status as BookStatus,
+      statusLabel: (bookStatusOverrides[domainBook.id] ?? domainBook.status) === 'reading'
+        ? '在读'
+        : (bookStatusOverrides[domainBook.id] ?? domainBook.status) === 'wish' ? '想读' : '已读完',
       progress: domainBook.progress,
       description: domainBook.description ?? '',
       quote: '',
       tone: domainBook.coverTone ?? 'rose',
       coverUrl: domainBook.coverUrl,
       lastOpenedAt: domainBook.lastOpenedAt,
+      pinnedAt: Object.hasOwn(bookPinOverrides, domainBook.id)
+        ? bookPinOverrides[domainBook.id] ?? undefined
+        : domainBook.pinnedAt,
     }))
-  }, [booksState, removedBookIds])
+  }, [bookPinOverrides, bookStatusOverrides, booksState, removedBookIds])
 
   const shelfBooks: Book[] = useMemo(() => loadedBooks
     .map((book) => {
@@ -493,9 +524,15 @@ function App() {
       }
     })
     .sort((a, b) => {
+      if (Boolean(a.pinnedAt) !== Boolean(b.pinnedAt)) return a.pinnedAt ? -1 : 1
       const aOpened = bookRecency[a.id] ?? a.lastOpenedAt
       const bOpened = bookRecency[b.id] ?? b.lastOpenedAt
-      if (aOpened === bOpened) return 0
+      if (aOpened === bOpened) {
+        if (a.pinnedAt && b.pinnedAt && a.pinnedAt !== b.pinnedAt) {
+          return b.pinnedAt.localeCompare(a.pinnedAt)
+        }
+        return 0
+      }
       if (!aOpened) return 1
       if (!bOpened) return -1
       return bOpened.localeCompare(aOpened)
@@ -660,6 +697,50 @@ function App() {
 
   const clearToast = () => setToast(null)
 
+  const toggleBookPinned = async (book: Book) => {
+    const pinning = !book.pinnedAt
+    try {
+      const updated = await setBookPinned(book.id, pinning)
+      if (!updated) return
+      setRoomBook((current) => current.id === book.id
+        ? { ...current, pinnedAt: updated.pinnedAt }
+        : current)
+      setBookPinOverrides((current) => ({
+        ...current,
+        [book.id]: updated.pinnedAt ?? null,
+      }))
+      setRoomMenuOpen(false)
+      setImportKey((key) => key + 1)
+      showToast(pinning ? `《${book.title}》已经盖章置顶。` : `《${book.title}》已取消置顶。`)
+    } catch (error) {
+      showToast('这枚印章暂时没能落下', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const cancelBookLongPress = () => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
+
+  const beginBookLongPress = (book: Book) => {
+    cancelBookLongPress()
+    longPressTriggeredRef.current = null
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressTimerRef.current = null
+      longPressTriggeredRef.current = book.id
+      void toggleBookPinned(book)
+    }, 620)
+  }
+
+  const suppressClickAfterLongPress = (bookId: string, event: React.MouseEvent) => {
+    if (longPressTriggeredRef.current !== bookId) return
+    event.preventDefault()
+    event.stopPropagation()
+    longPressTriggeredRef.current = null
+  }
+
   const updateCallingCard = (patch: Partial<CallingCard>) => {
     setCallingCard((current) => {
       const next = { ...current, ...patch }
@@ -668,16 +749,20 @@ function App() {
     })
   }
 
-  const rememberBookOpened = (book: Book) => {
+  const rememberBookOpened = (book: Book, startReading = false) => {
     bookRecencyClockRef.current = Math.max(Date.now(), bookRecencyClockRef.current + 1)
     const openedAt = new Date(bookRecencyClockRef.current).toISOString()
+    const nextStatus = startReading && book.status === 'wish' ? 'reading' : undefined
     setBookRecency((current) => {
       const next = { ...current, [book.id]: openedAt }
       writeBookRecency(next)
       return next
     })
+    if (nextStatus) {
+      setBookStatusOverrides((current) => ({ ...current, [book.id]: nextStatus }))
+    }
     bookTouchWriteRef.current = bookTouchWriteRef.current
-      .then(() => touchBook(book.id, openedAt))
+      .then(() => touchBook(book.id, openedAt, nextStatus))
       .then(() => undefined)
       .catch((error) => console.error('记录最近打开书籍失败', error))
   }
@@ -1005,9 +1090,10 @@ function App() {
       | { kind: 'chapter'; chapterIndex: number }
       | { kind: 'locator'; locator: Locator },
     rememberOpening = true,
+    resetResumePosition = false,
   ) => {
-    if (rememberOpening) rememberBookOpened(book)
-    setRoomBook(book)
+    if (rememberOpening) rememberBookOpened(book, true)
+    setRoomBook(book.status === 'wish' ? { ...book, status: 'reading', statusLabel: '在读' } : book)
     setRoomMenuOpen(false)
     setDeleteBookDialogOpen(false)
     setReaderChaptersReady(false)
@@ -1018,6 +1104,7 @@ function App() {
     setReturnPage(null)
     setBookmarkMenuOpen(false)
     setBookmarkReminderVisible(false)
+    setEndSlipPhase(null)
     setPageIndex(0)
     Promise.all([
       loadBookChapters(book.id),
@@ -1048,7 +1135,7 @@ function App() {
           setPendingChapter(null)
         } else {
           // 没有旧位置时，用户选章节就是第一次开始阅读；有旧位置时才算临时翻看。
-          resumeEligibleRef.current = !savedProgress
+          resumeEligibleRef.current = resetResumePosition || !savedProgress
           setPendingLocator(null)
           setPendingChapter(target.kind === 'chapter' ? target.chapterIndex : 0)
         }
@@ -1135,10 +1222,12 @@ function App() {
     setPanel(null)
     setChromeVisible(false)
     setActiveTrace(null)
+    setEndSlipPhase(null)
     clearSelection()
   }
 
   const handleReaderClick = (event: React.MouseEvent<HTMLElement>) => {
+    if (endSlipPhase) return
     const target = event.target as HTMLElement
     if (target.closest('button, mark, textarea, input, select')) return
     if (bookmarkMenuOpen) {
@@ -1154,7 +1243,14 @@ function App() {
     const rect = event.currentTarget.getBoundingClientRect()
     const position = (event.clientX - rect.left) / rect.width
     if (position < 0.4) turnToPage(pageIndex - 1)
-    else if (position > 0.6) turnToPage(pageIndex + 1)
+    else if (position > 0.6) {
+      if (pageIndex === totalPages - 1) {
+        setChromeVisible(false)
+        setPanel(null)
+        setBookmarkMenuOpen(false)
+        setEndSlipPhase('open')
+      } else turnToPage(pageIndex + 1)
+    }
     else { setChromeVisible((visible) => !visible); setPanel(null) }
   }
 
@@ -1373,6 +1469,63 @@ function App() {
     setBookmarkMenuOpen((open) => !open)
   }
 
+  const updateRoomBookStatus = (status: BookStatus) => {
+    const statusLabel = status === 'finished' ? '已读完' : status === 'wish' ? '想读' : '在读'
+    setBookStatusOverrides((current) => ({ ...current, [roomBook.id]: status }))
+    setRoomBook((current) => ({ ...current, status, statusLabel }))
+  }
+
+  const markRoomBookFinished = async () => {
+    setRoomMenuOpen(false)
+    try {
+      await setBookStatus(roomBook.id, 'finished')
+      updateRoomBookStatus('finished')
+      showToast('已经收进「已读完」。')
+    } catch (error) {
+      showToast('这本书暂时没能收好', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const restartRoomBook = async () => {
+    setRoomMenuOpen(false)
+    try {
+      await setBookStatus(roomBook.id, 'reading')
+      const restarted = { ...roomBook, status: 'reading' as const, statusLabel: '在读' }
+      setBookStatusOverrides((current) => ({ ...current, [roomBook.id]: 'reading' }))
+      setRoomBook(restarted)
+      openReader(restarted, { kind: 'chapter', chapterIndex: 0 }, true, true)
+    } catch (error) {
+      showToast('这本书暂时没能重新翻开', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const dismissEndSlip = () => {
+    setEndSlipPhase('closing')
+    window.setTimeout(() => setEndSlipPhase(null), 320)
+  }
+
+  const confirmEndOfBook = async () => {
+    if (finishingBook) return
+    setFinishingBook(true)
+    saveCurrentPagePosition()
+    try {
+      await progressWriteRef.current
+      await setBookStatus(roomBook.id, 'finished')
+      updateRoomBookStatus('finished')
+      setEndSlipPhase('closing')
+      window.setTimeout(() => {
+        setEndSlipPhase(null)
+        setFinishingBook(false)
+        setScreen('room')
+        showToast('已经收好。')
+      }, 520)
+    } catch (error) {
+      setFinishingBook(false)
+      setEndSlipPhase(null)
+      showToast('这本书暂时没能收好', error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const confirmDeleteRoomBook = async () => {
     if (deletingBook) return
     const bookId = roomBook.id
@@ -1456,6 +1609,13 @@ function App() {
           <>
             <button className="room-book-menu-dismiss" type="button" aria-label="收起书籍操作" onClick={() => setRoomMenuOpen(false)} />
             <div className="room-book-menu" role="menu">
+              <button type="button" role="menuitem" onClick={() => void toggleBookPinned(roomBook)}>
+                <Pin />{roomBook.pinnedAt ? '取消置顶' : '置顶这本书'}
+              </button>
+              <button type="button" role="menuitem" onClick={() => { void (roomBook.status === 'finished' ? restartRoomBook() : markRoomBookFinished()) }}>
+                {roomBook.status === 'finished' ? <CornerUpLeft /> : <Check />}
+                {roomBook.status === 'finished' ? '从头重温' : '标记读完'}
+              </button>
               <button type="button" role="menuitem" onClick={() => { setRoomMenuOpen(false); setDeleteBookDialogOpen(true) }}>
                 <Trash2 />移出书房
               </button>
@@ -1582,7 +1742,7 @@ function App() {
         )}
 
         <article
-          className="reader-page reader-page-v2"
+          className={`reader-page reader-page-v2 ${endSlipPhase ? 'is-at-ending' : ''}`}
           onClick={handleReaderClick}
           style={{
             '--reader-font-size': `${fontSize}px`,
@@ -1639,6 +1799,18 @@ function App() {
           </div>
           <div className="page-number" aria-label={`第 ${pageIndex + 1} 页，共 ${totalPages} 页`}>{String(pageIndex + 1).padStart(2, '0')}<span />{String(totalPages).padStart(2, '0')}</div>
         </article>
+
+        {endSlipPhase && (
+          <section className={`end-paper-slip ${endSlipPhase === 'closing' ? 'is-closing' : ''}`} aria-labelledby="end-paper-title">
+            <small>THE END</small>
+            <h2 id="end-paper-title">读到这里了</h2>
+            <p>要把这本书收进「已读完」吗？</p>
+            <div>
+              <button type="button" onClick={() => { void confirmEndOfBook() }} disabled={finishingBook}>收进已读完</button>
+              <button type="button" onClick={dismissEndSlip} disabled={finishingBook}>再停一会</button>
+            </div>
+          </section>
+        )}
 
         {returnPage !== null && <button className="return-slip" type="button" onClick={() => { resumeEligibleRef.current = true; setPageIndex(returnPage); setReturnPage(null); setBookmarkReminderVisible(false) }}><CornerUpLeft />回到刚才的位置</button>}
         {bookmarkReminderVisible && currentBookmark && (
@@ -1820,15 +1992,15 @@ function App() {
                   englishTitle: importDraft.englishTitle,
                   author: importDraft.author || '未知作者',
                   description: importDraft.description,
-                  status: 'reading',
-                  statusLabel: '在读',
+                  status: 'wish',
+                  statusLabel: '想读',
                   progress: 0,
                   quote: '',
                   tone: importDraft.tone,
                   coverUrl: importDraft.coverUrl,
                 }} />
                 <div>
-                  <span>在读</span>
+                  <span>想读</span>
                   <strong>{importDraft.title || '等待一本书'}</strong>
                   {importDraft.englishTitle && <em>{importDraft.englishTitle}</em>}
                   <small>{importDraft.author || '作者会出现在这里'}</small>
@@ -1851,10 +2023,29 @@ function App() {
           <button className="shelf-sidebar-backdrop" type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭侧边栏" />
           <aside className="shelf-sidebar" aria-label="侧边栏">
             <header className="sidebar-heading">
-              <div><small>THE READING ROOM</small><h2>书房</h2></div>
+              <div><small>THE READING ROOM</small><h2>书房抽屉</h2></div>
               <button type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭侧边栏面板"><X /></button>
             </header>
-            <section className="calling-card" aria-labelledby="calling-card-title">
+            <nav className="drawer-index" aria-label="书房抽屉">
+              {([
+                ['calling-card', '名帖', '称呼与落款', <SquarePen key="calling-card" />],
+                ['thoughts', '念头', '一处私人写作区', <Feather key="thoughts" />],
+                ['visits', '来访', `${companionLabel}的活动记录`, <Fish key="visits" />],
+                ['shadow-books', '影子书', '微信读书旧痕迹', <LibraryBig key="shadow-books" />],
+                ['cloud', '云端书房', '同步、备份与数据', <Cloud key="cloud" />],
+              ] as const).map(([id, title, description, icon]) => (
+                <button
+                  type="button"
+                  key={id}
+                  className={sidebarSection === id ? 'is-active' : ''}
+                  aria-pressed={sidebarSection === id}
+                  onClick={() => setSidebarSection(id)}
+                >
+                  {icon}<span><strong>{title}</strong><small>{description}</small></span><ChevronRight />
+                </button>
+              ))}
+            </nav>
+            {sidebarSection === 'calling-card' ? <section className="calling-card drawer-panel" aria-labelledby="calling-card-title">
               <div className="calling-card-title">
                 <div><small>CALLING CARDS</small><h3 id="calling-card-title">名帖</h3></div>
                 <span>称呼与落款</span>
@@ -1881,7 +2072,29 @@ function App() {
                 <span>{companionLabel}</span>
                 <p>{companionSubject}来过时，留下的文字会以这个名字落款。</p>
               </div>
-            </section>
+            </section> : (
+              <section className="drawer-placeholder drawer-panel" aria-live="polite">
+                <small>
+                  {sidebarSection === 'thoughts' && 'PRIVATE NOTES'}
+                  {sidebarSection === 'visits' && 'VISIT LOG'}
+                  {sidebarSection === 'shadow-books' && 'SHADOW BOOKS'}
+                  {sidebarSection === 'cloud' && 'CLOUD INK'}
+                </small>
+                <h3>
+                  {sidebarSection === 'thoughts' && '念头'}
+                  {sidebarSection === 'visits' && '来访'}
+                  {sidebarSection === 'shadow-books' && '影子书'}
+                  {sidebarSection === 'cloud' && '云端书房'}
+                </h3>
+                <p>
+                  {sidebarSection === 'thoughts' && '以后可以在这里写下不依附于某一本书的文字。'}
+                  {sidebarSection === 'visits' && `${companionLabel}进入书房、翻过书页或留下文字的踪迹，会安静地收在这里。`}
+                  {sidebarSection === 'shadow-books' && '从微信读书带回的旧划线与想法，会先以影子书的方式留在这里。'}
+                  {sidebarSection === 'cloud' && '跨设备同步、书房备份与 Supabase 连接状态，将在这里统一照看。'}
+                </p>
+                <span>这只抽屉已经留好位置，尚未启用。</span>
+              </section>
+            )}
           </aside>
         </>
       )}
@@ -1900,22 +2113,30 @@ function App() {
             </div>
           )}
           {booksState.status === 'ready' && filteredBooks.length === 0 && (
-            <div className="shelf-empty">
-              <small>A QUIET SHELF</small>
-              <h2>{shelfBooks.length ? '这一格还空着' : '书房还在等第一本书'}</h2>
-              <p>{shelfBooks.length ? '其他分类里或许还有正在等待的书。' : '藏入一册 EPUB，让这里从你的书开始。'}</p>
+            <div className={`shelf-empty ${shelfBooks.length ? '' : 'is-pristine'}`}>
+              {shelfBooks.length > 0 && <p>其他分类里或许还有正在等待的书。</p>}
               <button type="button" onClick={shelfBooks.length ? () => setFilter('all') : openImportDialog}>
                 {shelfBooks.length ? '回到全部藏书' : '藏入第一本书'} <ChevronRight />
               </button>
             </div>
           )}
           {filteredBooks.map((book) => (
-            <article className="book-row book-row-v2" key={book.id}>
+            <article
+              className={`book-row book-row-v2 ${book.pinnedAt ? 'is-pinned' : ''}`}
+              key={book.id}
+              onPointerDown={() => beginBookLongPress(book)}
+              onPointerUp={cancelBookLongPress}
+              onPointerCancel={cancelBookLongPress}
+              onPointerMove={cancelBookLongPress}
+              onPointerLeave={cancelBookLongPress}
+              onClickCapture={(event) => suppressClickAfterLongPress(book.id, event)}
+            >
               <button className="book-cover-button" type="button" onClick={() => openRoom(book)} aria-label={`查看《${book.title}》的书籍档案`}><BookCover book={book} /><small>查看书籍档案</small></button>
               <button className="book-main book-main-button" type="button" onClick={() => { if (openableBookIds.has(book.id)) openReaderAtResume(book); else { setRoomBook(book); showToast('这本书还没有拆封。') } }} aria-label={`${book.lastChapter ? '继续阅读' : '打开'}《${book.title}》`}>
                 <span className="book-state">{book.statusLabel}</span><strong>{book.title}</strong><em>{book.englishTitle}</em><span className="book-author">{book.author}</span><span className="book-description">{book.description}</span><span className="open-book">{book.lastChapter ? '继续阅读' : '翻开看看'} <ChevronRight /></span>
               </button>
               <button className="book-trace book-trace-button" type="button" onClick={() => { if (openableBookIds.has(book.id)) openReaderAtResume(book); else { setRoomBook(book); showToast('这里还没有阅读痕迹。') } }} aria-label={`查看《${book.title}》上次读到的位置`}>
+                {book.pinnedAt && <PinnedBookSeal />}
                 <BookOpenText /><small>{book.lastChapter ? `上次读到 · ${book.lastChapter}` : '尚未开始阅读'}</small>
                 <q>{book.lastChapter ? book.quote : '这本书还在等待第一次翻开。'}</q>
                 <span>{book.lastChapter ? '回到这句话' : '翻开看看'} <ChevronRight /></span>
@@ -1932,23 +2153,39 @@ function App() {
             </div>
           )}
           {booksState.status === 'ready' && filteredBooks.length === 0 && (
-            <div className="shelf-empty">
-              <small>A QUIET SHELF</small>
-              <h2>{shelfBooks.length ? '这一格还空着' : '书房还在等第一本书'}</h2>
-              <p>{shelfBooks.length ? '其他分类里或许还有正在等待的书。' : '藏入一册 EPUB，让这里从你的书开始。'}</p>
+            <div className={`shelf-empty ${shelfBooks.length ? '' : 'is-pristine'}`}>
+              {shelfBooks.length > 0 && <p>其他分类里或许还有正在等待的书。</p>}
               <button type="button" onClick={shelfBooks.length ? () => setFilter('all') : openImportDialog}>
                 {shelfBooks.length ? '回到全部藏书' : '藏入第一本书'} <ChevronRight />
               </button>
             </div>
           )}
           {filteredBooks.map((book) => (
-            <button className="grid-cover-button" type="button" key={book.id} onClick={() => openRoom(book)} aria-label={`查看《${book.title}》的书籍档案`}>
+            <button
+              className={`grid-cover-button ${book.pinnedAt ? 'is-pinned' : ''}`}
+              type="button"
+              key={book.id}
+              onPointerDown={() => beginBookLongPress(book)}
+              onPointerUp={cancelBookLongPress}
+              onPointerCancel={cancelBookLongPress}
+              onPointerMove={cancelBookLongPress}
+              onPointerLeave={cancelBookLongPress}
+              onClick={(event) => {
+                if (longPressTriggeredRef.current === book.id) {
+                  longPressTriggeredRef.current = null
+                  event.preventDefault()
+                  return
+                }
+                openRoom(book)
+              }}
+              aria-label={`查看《${book.title}》的书籍档案`}
+            >
               <BookCover book={book} />
             </button>
           ))}
         </section>
       )}
-      <footer className="shelf-footer"><span>Marginalia · 私人共读书房</span><span>昨夜的灯尚未亮起</span></footer>
+      <footer className="shelf-footer" aria-hidden="true" />
       <Toast toast={toast} onClose={clearToast} />
     </main>
   )
