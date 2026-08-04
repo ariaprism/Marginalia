@@ -119,7 +119,7 @@ describe('Marginalia visual prototype', () => {
   it('opens a book room from the cover and continues into the reader', async () => {
     await renderWithRainRoom()
 
-    expect(screen.getByText('在正文之外，我们相遇。')).toBeInTheDocument()
+    expect(screen.getByText('Outside the text, we meet.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '查看《雨夜书房》的书籍档案' }))
     fireEvent.click(screen.getByRole('button', { name: '一座只在雨夜出现的旧书房，替迟迟没有说出口的人，保存那些被折起来的句子。' }))
     expect(screen.getByRole('dialog', { name: '雨夜书房' })).toBeInTheDocument()
@@ -265,35 +265,43 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByRole('button', { name: '切换为列表书架' })).toBeInTheDocument()
   })
 
-  it('keeps the calling cards in the sidebar while the title toggles the shelf', () => {
+  it('opens drawer entries in the main page and closes the sidebar', async () => {
     render(<App />)
 
     fireEvent.click(screen.getByRole('button', { name: '打开侧边栏' }))
-    expect(screen.getByRole('heading', { name: '名帖' })).toBeInTheDocument()
-    expect(screen.getByLabelText('我的落款')).toHaveValue('小狐狸')
-    expect(screen.getByLabelText('共读者的名字')).toHaveValue('小鱼')
+    expect(screen.getByRole('heading', { name: /书房/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /抽屉/ })).toBeInTheDocument()
+    expect(screen.getByText('THE READING ROOM')).toBeInTheDocument()
+    expect(screen.getByText('THE DRAWER')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '书架全部藏书' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: /念头/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /来访/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /影子书/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /云端书房/ })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /影子书/ }))
-    expect(screen.getByRole('heading', { name: '影子书' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '影子书', level: 1 })).toBeInTheDocument()
+    expect(screen.queryByText('Outside the text, we meet.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '藏入书籍' })).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: '侧边栏' })).not.toBeInTheDocument())
     expect(screen.getByText(/微信读书带回的旧划线/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '打开侧边栏' }))
     fireEvent.click(screen.getByRole('button', { name: /名帖/ }))
+    expect(screen.getByLabelText('我的落款')).toHaveValue('小狐狸')
+    expect(screen.getByLabelText('共读者的名字')).toHaveValue('小鱼')
 
     fireEvent.change(screen.getByLabelText('我的落款'), { target: { value: '阿狐' } })
     fireEvent.change(screen.getByLabelText('共读者的名字'), { target: { value: '小鲸' } })
     fireEvent.change(screen.getByLabelText('如何称呼共读者'), { target: { value: '他' } })
     expect(screen.getByText('他来过时，留下的文字会以这个名字落款。')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '关闭侧边栏面板' }))
-    expect(screen.queryByRole('complementary', { name: '侧边栏' })).not.toBeInTheDocument()
-
     fireEvent.click(screen.getByRole('button', { name: '打开侧边栏' }))
+    fireEvent.click(screen.getByRole('button', { name: /名帖/ }))
     expect(screen.getByLabelText('我的落款')).toHaveValue('阿狐')
     expect(screen.getByLabelText('共读者的名字')).toHaveValue('小鲸')
-    fireEvent.click(screen.getByRole('button', { name: '关闭侧边栏面板' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开侧边栏' }))
+    fireEvent.click(screen.getByRole('button', { name: '书架全部藏书' }))
 
     fireEvent.click(screen.getByRole('button', { name: '切换为封面书架' }))
     expect(screen.getByRole('region', { name: '封面书架' })).toBeInTheDocument()

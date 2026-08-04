@@ -83,7 +83,15 @@ type ReaderTypeface = 'serif' | 'sans'
 type ShelfView = 'list' | 'covers'
 type Screen = 'shelf' | 'room' | 'reader'
 type BookStatus = Exclude<ShelfFilter, 'all'>
-type SidebarSection = 'calling-card' | 'thoughts' | 'visits' | 'shadow-books' | 'cloud'
+type SidebarSection = 'shelf' | 'calling-card' | 'thoughts' | 'visits' | 'shadow-books' | 'cloud'
+
+const DRAWER_PAGE_TITLES: Record<Exclude<SidebarSection, 'shelf'>, { title: string; eyebrow: string }> = {
+  'calling-card': { title: '名帖', eyebrow: 'CALLING CARDS' },
+  thoughts: { title: '念头', eyebrow: 'THOUGHTS' },
+  visits: { title: '来访', eyebrow: 'VISITS' },
+  'shadow-books': { title: '影子书', eyebrow: 'SHADOW BOOKS' },
+  cloud: { title: '云端书房', eyebrow: 'CLOUD ROOM' },
+}
 
 type Book = {
   id: string
@@ -317,13 +325,7 @@ function BrandHeader({
   return (
     <header className="shelf-header">
       <div className="brand-lockup">
-        <button className="shelf-menu-button" type="button" onClick={onOpenSidebar} aria-label="打开侧边栏" title="打开侧边栏">
-          <span className="shelf-menu-mark" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-        </button>
+        {onOpenSidebar && <SidebarMenuButton onOpen={onOpenSidebar} />}
         <div className="brand-copy">
           <button
             className="brand-title-toggle"
@@ -334,10 +336,30 @@ function BrandHeader({
           >
             <span className="brand-name">Marginalia</span>
           </button>
-          <p className="brand-subtitle">在正文之外，我们相遇。</p>
         </div>
       </div>
       {onOpenImport && <ImportBookControl onOpen={onOpenImport} />}
+    </header>
+  )
+}
+
+function SidebarMenuButton({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button className="shelf-menu-button" type="button" onClick={onOpen} aria-label="打开侧边栏" title="打开侧边栏">
+      <span className="shelf-menu-mark" aria-hidden="true">
+        <i className="shelf-menu-leaf" />
+        <i className="shelf-menu-pull" />
+      </span>
+    </button>
+  )
+}
+
+function DrawerPageHeader({ section, onOpenSidebar }: { section: Exclude<SidebarSection, 'shelf'>; onOpenSidebar: () => void }) {
+  const pageTitle = DRAWER_PAGE_TITLES[section]
+  return (
+    <header className="shelf-header drawer-page-header">
+      <div className="drawer-page-title"><SidebarMenuButton onOpen={onOpenSidebar} /><h1>{pageTitle.title}</h1></div>
+      <small>{pageTitle.eyebrow}</small>
     </header>
   )
 }
@@ -389,8 +411,10 @@ function App() {
   const [lastViewRestored, setLastViewRestored] = useState(false)
   const [screen, setScreen] = useState<Screen>('shelf')
   const [shelfView, setShelfView] = useState<ShelfView>('list')
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [sidebarSection, setSidebarSection] = useState<SidebarSection>('calling-card')
+  const [sidebarPhase, setSidebarPhase] = useState<'open' | 'closing' | null>(null)
+  const sidebarCloseTimerRef = useRef<number | null>(null)
+  const [sidebarSection, setSidebarSection] = useState<SidebarSection>('shelf')
+  const [drawerPage, setDrawerPage] = useState<SidebarSection | null>(null)
   const [callingCard, setCallingCard] = useState<CallingCard>(readCallingCard)
   const [bookRecency, setBookRecency] = useState<Record<string, string>>(readBookRecency)
   const [bookPinOverrides, setBookPinOverrides] = useState<Record<string, string | null>>({})
@@ -883,14 +907,33 @@ function App() {
     }
   }
 
+  const openSidebar = useCallback(() => {
+    if (sidebarCloseTimerRef.current !== null) window.clearTimeout(sidebarCloseTimerRef.current)
+    sidebarCloseTimerRef.current = null
+    setSidebarPhase('open')
+  }, [])
+
+  const closeSidebar = useCallback(() => {
+    if (sidebarPhase !== 'open') return
+    setSidebarPhase('closing')
+    sidebarCloseTimerRef.current = window.setTimeout(() => {
+      setSidebarPhase(null)
+      sidebarCloseTimerRef.current = null
+    }, 320)
+  }, [sidebarPhase])
+
+  useEffect(() => () => {
+    if (sidebarCloseTimerRef.current !== null) window.clearTimeout(sidebarCloseTimerRef.current)
+  }, [])
+
   useEffect(() => {
-    if (!sidebarOpen) return
+    if (sidebarPhase === null) return
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSidebarOpen(false)
+      if (event.key === 'Escape') closeSidebar()
     }
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [sidebarOpen])
+  }, [closeSidebar, sidebarPhase])
 
   const recalculatePagination = useCallback(() => {
     const viewport = viewportRef.current
@@ -1913,8 +1956,10 @@ function App() {
 
   return (
     <main className="shelf-shell shelf-shell-v2">
-      <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} onOpenSidebar={() => setSidebarOpen(true)} onOpenImport={openImportDialog} />
-      {importDialogOpen && (
+      {drawerPage && drawerPage !== 'shelf'
+        ? <DrawerPageHeader section={drawerPage} onOpenSidebar={openSidebar} />
+        : <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} onOpenSidebar={openSidebar} onOpenImport={openImportDialog} />}
+      {!drawerPage && importDialogOpen && (
         <div className="import-dialog-backdrop" onClick={closeImportDialog}>
           <section
             className="import-dialog"
@@ -2018,19 +2063,33 @@ function App() {
           </section>
         </div>
       )}
-      {sidebarOpen && (
+      {sidebarPhase && (
         <>
-          <button className="shelf-sidebar-backdrop" type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭侧边栏" />
-          <aside className="shelf-sidebar" aria-label="侧边栏">
+          <button className={`shelf-sidebar-backdrop ${sidebarPhase === 'closing' ? 'is-closing' : ''}`} type="button" onClick={closeSidebar} aria-label="关闭侧边栏" />
+          <aside className={`shelf-sidebar ${sidebarPhase === 'closing' ? 'is-closing' : ''}`} aria-label="侧边栏">
             <header className="sidebar-heading">
-              <div><small>THE READING ROOM</small><h2>书房抽屉</h2></div>
-              <button type="button" onClick={() => setSidebarOpen(false)} aria-label="关闭侧边栏面板"><X /></button>
+              <div><small>MARGINALIA</small><h2>目录</h2></div>
             </header>
             <nav className="drawer-index" aria-label="书房抽屉">
+              <h3><span>书房</span><small>THE READING ROOM</small></h3>
               {([
-                ['calling-card', '名帖', '称呼与落款', <SquarePen key="calling-card" />],
+                ['shelf', '书架', '全部藏书', <BookOpenText key="shelf" />],
                 ['thoughts', '念头', '一处私人写作区', <Feather key="thoughts" />],
                 ['visits', '来访', `${companionLabel}的活动记录`, <Fish key="visits" />],
+              ] as const).map(([id, title, description, icon]) => (
+                <button
+                  type="button"
+                  key={id}
+                  className={sidebarSection === id ? 'is-active' : ''}
+                  aria-pressed={sidebarSection === id}
+                  onClick={() => { setSidebarSection(id); setDrawerPage(id === 'shelf' ? null : id); closeSidebar() }}
+                >
+                  {icon}<span><strong>{title}</strong><small>{description}</small></span><ChevronRight />
+                </button>
+              ))}
+              <h3><span>抽屉</span><small>THE DRAWER</small></h3>
+              {([
+                ['calling-card', '名帖', '称呼与落款', <SquarePen key="calling-card" />],
                 ['shadow-books', '影子书', '微信读书旧痕迹', <LibraryBig key="shadow-books" />],
                 ['cloud', '云端书房', '同步、备份与数据', <Cloud key="cloud" />],
               ] as const).map(([id, title, description, icon]) => (
@@ -2039,17 +2098,17 @@ function App() {
                   key={id}
                   className={sidebarSection === id ? 'is-active' : ''}
                   aria-pressed={sidebarSection === id}
-                  onClick={() => setSidebarSection(id)}
+                  onClick={() => { setSidebarSection(id); setDrawerPage(id); closeSidebar() }}
                 >
                   {icon}<span><strong>{title}</strong><small>{description}</small></span><ChevronRight />
                 </button>
               ))}
             </nav>
-            {sidebarSection === 'calling-card' ? <section className="calling-card drawer-panel" aria-labelledby="calling-card-title">
-              <div className="calling-card-title">
-                <div><small>CALLING CARDS</small><h3 id="calling-card-title">名帖</h3></div>
-                <span>称呼与落款</span>
-              </div>
+          </aside>
+        </>
+      )}
+      {drawerPage ? <section className="drawer-page" aria-live="polite">
+        {sidebarSection === 'calling-card' ? <section className="calling-card drawer-panel" aria-label="名帖设置">
               <label>
                 <span>我的落款</span>
                 <input aria-label="我的落款" value={callingCard.userName} onChange={(event) => updateCallingCard({ userName: event.target.value })} />
@@ -2074,18 +2133,6 @@ function App() {
               </div>
             </section> : (
               <section className="drawer-placeholder drawer-panel" aria-live="polite">
-                <small>
-                  {sidebarSection === 'thoughts' && 'PRIVATE NOTES'}
-                  {sidebarSection === 'visits' && 'VISIT LOG'}
-                  {sidebarSection === 'shadow-books' && 'SHADOW BOOKS'}
-                  {sidebarSection === 'cloud' && 'CLOUD INK'}
-                </small>
-                <h3>
-                  {sidebarSection === 'thoughts' && '念头'}
-                  {sidebarSection === 'visits' && '来访'}
-                  {sidebarSection === 'shadow-books' && '影子书'}
-                  {sidebarSection === 'cloud' && '云端书房'}
-                </h3>
                 <p>
                   {sidebarSection === 'thoughts' && '以后可以在这里写下不依附于某一本书的文字。'}
                   {sidebarSection === 'visits' && `${companionLabel}进入书房、翻过书页或留下文字的踪迹，会安静地收在这里。`}
@@ -2095,9 +2142,7 @@ function App() {
                 <span>这只抽屉已经留好位置，尚未启用。</span>
               </section>
             )}
-          </aside>
-        </>
-      )}
+      </section> : <>
       <nav className="shelf-filters" aria-label="书架分类">
         {filters.map((item) => {
           const count = item.id === 'all' ? shelfBooks.length : shelfBooks.filter((book) => book.status === item.id).length
@@ -2185,7 +2230,8 @@ function App() {
           ))}
         </section>
       )}
-      <footer className="shelf-footer" aria-hidden="true" />
+      </>}
+      {!drawerPage && <footer className="shelf-footer"><span>Outside the text, we meet.</span></footer>}
       <Toast toast={toast} onClose={clearToast} />
     </main>
   )
