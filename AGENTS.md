@@ -10,7 +10,7 @@
 
 - Phase：Phase 1B — Living Book / 真实 EPUB（Phase 0 地基与 Phase 1A 视觉原型已完成）
 - 状态：进行中
-- 当前目标：完成“纯真实书架”的桌面／手机最终验收并发布 GitHub Pages 验收站，形成 `v0.2 Living Book` 检查点。代码第一轮 feature 边界和 Phase 1B 文档已经整理完成。
+- 当前目标：在 GitHub Pages 验收站与真实设备完成“纯真实书架”的最终验收，形成 `v0.2 Living Book` 检查点。代码第一轮 feature 边界、Phase 1B 文档与自动部署已经整理完成。
 
 ## 已完成
 
@@ -73,6 +73,7 @@
 - [x] 完成 `App.tsx` 第一轮 feature 拆分：书架视图模型与组件、藏书弹窗及导入状态、书房抽屉及名帖状态、阅读工具面板与排版状态分别归位；分页、Locator、痕迹与折页核心编排暂留 App
 - [x] 补齐 Phase 1B 架构、本地数据、验收故事、已知边界与非目标文档，并更新 README 当前阶段
 - [x] 配置 GitHub Pages 项目路径与自动部署工作流：每次推送 `main` 先通过 test／lint／build，再发布 `dist`
+- [x] 发布首个 GitHub Pages 验收站 `https://ariaprism.github.io/Marginalia/`，启用 HTTPS 并确认公网返回 200
 
 ## 正在进行
 
@@ -83,9 +84,8 @@
 当小狐狸说“小G，我们接下来干嘛”时，无需重新盘视觉稿，直接回答并推进下面的顺序：
 
 1. 完成一轮真实设备验收：空书房 → 导入 EPUB → 阅读／折页／划线／批注 → 刷新恢复 → 删除。
-2. 配置 GitHub Pages 的 Vite `base` 与部署工作流，发布第一个可访问的静态验收站。
-3. 线上验收稳定后形成 `v0.2 Living Book` 检查点；分页、Locator、痕迹与折页控制器的第二轮拆分可在不改变语义时继续渐进整理。
-4. 检查点稳定后再进入 Phase 2：先设计本地优先同步语义，再建立 Supabase schema、RLS、Storage 与 outbox。
+2. 线上验收稳定后形成 `v0.2 Living Book` 检查点；分页、Locator、痕迹与折页控制器的第二轮拆分可在不改变语义时继续渐进整理。
+3. 检查点稳定后再进入 Phase 2：先设计本地优先同步语义，再建立 Supabase schema、RLS、Storage 与 outbox。
 
 小狐狸不需要提前准备代码；遇到会改变产品语义的选择（例如上传入口的文案、解析失败的处理方式）再请小狐狸决定。
 
@@ -139,6 +139,7 @@
 - 2026-08-04：真实 EPUB 重复章名与首字下沉语义修正后，正文提取与 Locator 定向测试 26 项通过，`npm test`（95 项通过）、`npm run build`、`npm run lint` 通过
 - 2026-08-05：`App.tsx` 第一轮 feature 拆分后由 2269 行／约 103 KB 降至 1703 行／约 76 KB，`npm test`（95 项通过）、`npm run build`、`npm run lint` 通过
 - 2026-08-05：Phase 1B 文档与 GitHub Pages 工作流接通后，`npm test`（95 项通过）、`npm run build`、`npm run lint` 通过；生产产物资源路径确认为 `/Marginalia/assets/...`
+- 2026-08-05：修正 CI 中依赖本机时区的痕迹时间断言；GitHub Actions 的 95 项测试、lint、build、Pages 上传与部署全部通过，`https://ariaprism.github.io/Marginalia/` 公网返回 HTTP 200
 
 ## 近期决定
 
