@@ -1,27 +1,15 @@
 import {
   ArrowLeft,
-  BarChart3,
   Bookmark,
   BookOpenText,
   Check,
   ChevronRight,
-  Cloud,
   Copy,
   CornerUpLeft,
-  Feather,
-  Fish,
   Highlighter,
-  ImagePlus,
-  LibraryBig,
-  ListTree,
   MessageSquareText,
-  MoreHorizontal,
   Pin,
-  Plus,
   SquarePen,
-  SunMoon,
-  Type,
-  Upload,
   Trash2,
   X,
 } from 'lucide-react'
@@ -52,7 +40,6 @@ import {
 } from './data/local/traceStore'
 import { cleanupLegacySampleData } from './data/local/seedSampleTraces'
 import type { Locator } from './domain/locator'
-import type { BookCoverTone } from './domain/book'
 import {
   createReadingProgress,
   moveReadingBookmark,
@@ -60,14 +47,34 @@ import {
   type ReadingProgress,
 } from './domain/readingProgress'
 import { useBooks } from './features/bookshelf/useBooks'
-import { coverTitleLines } from './features/bookshelf/coverTitle'
+import { BookCover, BrandHeader, ChapterTraceMark, PinnedBookSeal } from './features/bookshelf/components'
 import {
-  imageFileToDataUrl,
-  prepareEpubFile,
-  savePreparedEpub,
-  type PreparedEpubImport,
-} from './features/import-book/importEpub'
+  EMPTY_ROOM_BOOK,
+  SHELF_FILTERS as filters,
+  type BookStatus,
+  type ShelfBook as Book,
+  type ShelfFilter,
+  type ShelfView,
+} from './features/bookshelf/viewModel'
+import { ImportBookDialog } from './features/import-book/ImportBookDialog'
+import { useImportBookDialog } from './features/import-book/useImportBookDialog'
+import {
+  DrawerOverlay,
+  DrawerPageContent,
+  DrawerPageHeader,
+} from './features/drawer/Drawer'
+import { useDrawer } from './features/drawer/useDrawer'
+import {
+  readBookRecency,
+  readLastView,
+  writeBookRecency,
+  writeLastView,
+  type LastView,
+  type Screen,
+} from './features/settings/localSettings'
 import { loadBookChapters, type ChapterText } from './reader/bookContent'
+import { ReaderControls, type ReaderPanel } from './features/reader/ReaderControls'
+import { useReaderAppearance } from './features/reader/useReaderAppearance'
 import {
   locatorFromSentenceRange,
   resolveLocator,
@@ -76,302 +83,15 @@ import {
 import type { NoteEntry, Trace } from './reader/trace'
 import './App.css'
 
-type ShelfFilter = 'all' | 'reading' | 'wish' | 'finished'
-type ReaderPanel = 'toc' | 'traces' | 'stats' | 'type' | null
-type ReaderTheme = 'day' | 'night'
-type ReaderTypeface = 'serif' | 'sans'
-type ShelfView = 'list' | 'covers'
-type Screen = 'shelf' | 'room' | 'reader'
-type BookStatus = Exclude<ShelfFilter, 'all'>
-type SidebarSection = 'shelf' | 'calling-card' | 'thoughts' | 'visits' | 'shadow-books' | 'cloud'
-
-const DRAWER_PAGE_TITLES: Record<Exclude<SidebarSection, 'shelf'>, { title: string; eyebrow: string }> = {
-  'calling-card': { title: '名帖', eyebrow: 'CALLING CARDS' },
-  thoughts: { title: '念头', eyebrow: 'THOUGHTS' },
-  visits: { title: '来访', eyebrow: 'VISITS' },
-  'shadow-books': { title: '影子书', eyebrow: 'SHADOW BOOKS' },
-  cloud: { title: '云端书房', eyebrow: 'CLOUD ROOM' },
-}
-
-type Book = {
-  id: string
-  title: string
-  englishTitle: string
-  author: string
-  status: BookStatus
-  statusLabel: string
-  progress: number
-  description: string
-  quote: string
-  lastChapter?: string
-  tone: BookCoverTone
-  coverUrl?: string
-  lastOpenedAt?: string
-  pinnedAt?: string
-}
-
-type ImportDraft = {
-  title: string
-  englishTitle: string
-  author: string
-  description: string
-  tone: BookCoverTone
-  coverUrl?: string
-}
 
 type ReflowAnchor = { chapterIndex: number; ratio: number }
 type SentenceSelection = { chapterIndex: number; start: number; end: number }
 type BubblePosition = { left: number; top: number; placement: 'above' | 'below' }
 type PageAnchor = SentenceSelection
-type LastView = { screen: Screen; bookId?: string }
-type CompanionPronoun = '她' | '他' | 'TA' | 'name'
-type CallingCard = {
-  userName: string
-  companionName: string
-  companionPronoun: CompanionPronoun
-}
-
-const LAST_VIEW_KEY = 'marginalia:last-view'
-const BOOK_RECENCY_KEY = 'marginalia:book-recency'
-const CALLING_CARD_KEY = 'marginalia:calling-card'
-const DEFAULT_CALLING_CARD: CallingCard = {
-  userName: '小狐狸',
-  companionName: '小鱼',
-  companionPronoun: '她',
-}
-const EMPTY_IMPORT_DRAFT: ImportDraft = {
-  title: '',
-  englishTitle: '',
-  author: '',
-  description: '',
-  tone: 'rose',
-}
-const COVER_TONES: { id: BookCoverTone; label: string }[] = [
-  { id: 'rose', label: '棕红' },
-  { id: 'blue', label: '雾蓝' },
-  { id: 'green', label: '苔绿' },
-  { id: 'ochre', label: '赭黄' },
-]
-
-function readLastView(): LastView {
-  try {
-    const raw = window.localStorage.getItem(LAST_VIEW_KEY)
-    if (!raw) return { screen: 'shelf' }
-    const parsed = JSON.parse(raw) as LastView
-    return parsed.screen === 'reader' || parsed.screen === 'room'
-      ? parsed
-      : { screen: 'shelf' }
-  } catch {
-    return { screen: 'shelf' }
-  }
-}
-
-function writeLastView(view: LastView) {
-  try {
-    window.localStorage.setItem(LAST_VIEW_KEY, JSON.stringify(view))
-  } catch {
-    // 隐私模式或存储被禁用时，阅读位置仍由 IndexedDB 保存；只是不恢复界面层。
-  }
-}
-
-function readBookRecency(): Record<string, string> {
-  try {
-    return JSON.parse(window.localStorage.getItem(BOOK_RECENCY_KEY) ?? '{}') as Record<string, string>
-  } catch {
-    return {}
-  }
-}
-
-function writeBookRecency(recency: Record<string, string>) {
-  try {
-    window.localStorage.setItem(BOOK_RECENCY_KEY, JSON.stringify(recency))
-  } catch {
-    // 排序偏好写不进去时不影响书籍本身。
-  }
-}
-
-function readCallingCard(): CallingCard {
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(CALLING_CARD_KEY) ?? '{}') as Partial<CallingCard>
-    const pronoun = stored.companionPronoun
-    return {
-      userName: stored.userName ?? DEFAULT_CALLING_CARD.userName,
-      companionName: stored.companionName ?? DEFAULT_CALLING_CARD.companionName,
-      companionPronoun: pronoun === '她' || pronoun === '他' || pronoun === 'TA' || pronoun === 'name'
-        ? pronoun
-        : DEFAULT_CALLING_CARD.companionPronoun,
-    }
-  } catch {
-    return DEFAULT_CALLING_CARD
-  }
-}
-
-function writeCallingCard(card: CallingCard) {
-  try {
-    window.localStorage.setItem(CALLING_CARD_KEY, JSON.stringify(card))
-  } catch {
-    // 称呼属于轻量界面设置；存储受限时仅保留到本次打开。
-  }
-}
-
-const EMPTY_ROOM_BOOK: Book = {
-  id: '',
-  title: '',
-  englishTitle: '',
-  author: '',
-  status: 'reading',
-  statusLabel: '在读',
-  progress: 0,
-  description: '',
-  quote: '',
-  tone: 'rose',
-}
-
 function traceLineClass(trace: Trace) {
   if (trace.highlighted) return 'trace-line-highlight'
   if (trace.foxNotes?.length) return 'trace-line-annotation'
   return ''
-}
-
-const filters: { id: ShelfFilter; label: string }[] = [
-  { id: 'all', label: '全部' },
-  { id: 'reading', label: '在读' },
-  { id: 'wish', label: '想读' },
-  { id: 'finished', label: '已读完' },
-]
-
-function ChapterTraceMark() {
-  return (
-    <svg className="chapter-trace-mark" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6.1 2.8c3.6.2 7.3-.2 11.1 0 .9 0 1.5.6 1.5 1.5-.2 5.1.2 10.2 0 15.4 0 .9-.6 1.5-1.5 1.5-3.7-.2-7.4.2-11.1 0-.9 0-1.5-.6-1.5-1.5.2-5.2-.2-10.3 0-15.4 0-.9.6-1.5 1.5-1.5Z" />
-      <path d="M7.7 7.1c2.1-.3 4.1.3 6.4-.1M7.5 10.5c3 .4 5.3-.4 8.8.1M7.8 13.8c1.7-.2 3.1.3 4.8 0" />
-    </svg>
-  )
-}
-
-function catalogueIndexFor(book: Book) {
-  let hash = 0
-  for (const char of book.id) hash = (hash * 31 + char.charCodeAt(0)) % 89
-  return 1 + hash
-}
-
-function BookCover({ book, large = false }: { book: Book; large?: boolean }) {
-  const catalogueNumber = String(catalogueIndexFor(book)).padStart(2, '0')
-  const titleLines = coverTitleLines(book.title)
-  const widestLine = Math.max(...titleLines.map((line) => Array.from(line).length))
-  return (
-    <span className={`book-cover cover-${book.tone} ${book.coverUrl ? 'has-image' : ''} ${large ? 'is-large' : ''}`} aria-hidden="true">
-      {book.coverUrl
-        ? <img className="cover-image" src={book.coverUrl} alt="" />
-        : <>
-            <span className="cover-index">MARGINALIA · {catalogueNumber}</span>
-            <span className={`cover-title ${widestLine > 3 ? 'has-wide-line' : ''}`}>
-              {titleLines.map((line, index) => <span className="cover-title-line" key={`${index}-${line}`}>{line}</span>)}
-            </span>
-            <span className="cover-english">{book.englishTitle}</span>
-          </>}
-    </span>
-  )
-}
-
-/**
- * 藏书入口。
- *
- * 用 <label> 直接包住 <input type="file">，而不是拿按钮去 input.click()：
- * iOS Safari 只信任落在 input 自身上的用户手势，JS 转发的点击会被静默忽略，
- * 表现就是手机上点「藏入一本书」毫无反应。
- */
-function ImportBookControl({ onOpen }: { onOpen: () => void }) {
-  return (
-    <button className="import-book" type="button" onClick={onOpen}>
-      <Plus size={18} strokeWidth={1.5} aria-hidden="true" />
-      <span>藏入书籍</span>
-    </button>
-  )
-}
-
-function BrandHeader({
-  onBack,
-  shelfView,
-  onToggleView,
-  onOpenSidebar,
-  onOpenImport,
-  onOpenBookMenu,
-  bookMenuOpen,
-}: {
-  onBack?: () => void
-  shelfView?: ShelfView
-  onToggleView?: () => void
-  onOpenSidebar?: () => void
-  onOpenImport?: () => void
-  onOpenBookMenu?: () => void
-  bookMenuOpen?: boolean
-}) {
-  if (onBack) {
-    return (
-      <header className="shelf-header room-header">
-        <button className="room-back-link" type="button" onClick={onBack} aria-label="返回书架">
-          <span className="room-back"><ArrowLeft /></span><small>BACK TO BOOKSHELF</small>
-        </button>
-        {onOpenBookMenu && (
-          <button className="room-menu-button" type="button" onClick={onOpenBookMenu} aria-label="管理这本书" aria-expanded={bookMenuOpen}>
-            <MoreHorizontal />
-          </button>
-        )}
-      </header>
-    )
-  }
-
-  return (
-    <header className="shelf-header">
-      <div className="brand-lockup">
-        {onOpenSidebar && <SidebarMenuButton onOpen={onOpenSidebar} />}
-        <div className="brand-copy">
-          <button
-            className="brand-title-toggle"
-            type="button"
-            onClick={onToggleView}
-            aria-label={shelfView === 'covers' ? '切换为列表书架' : '切换为封面书架'}
-            title={shelfView === 'covers' ? '切换为列表书架' : '切换为封面书架'}
-          >
-            <span className="brand-name">Marginalia</span>
-          </button>
-        </div>
-      </div>
-      {onOpenImport && <ImportBookControl onOpen={onOpenImport} />}
-    </header>
-  )
-}
-
-function SidebarMenuButton({ onOpen }: { onOpen: () => void }) {
-  return (
-    <button className="shelf-menu-button" type="button" onClick={onOpen} aria-label="打开侧边栏" title="打开侧边栏">
-      <span className="shelf-menu-mark" aria-hidden="true">
-        <i className="shelf-menu-leaf" />
-        <i className="shelf-menu-pull" />
-      </span>
-    </button>
-  )
-}
-
-function DrawerPageHeader({ section, onOpenSidebar }: { section: Exclude<SidebarSection, 'shelf'>; onOpenSidebar: () => void }) {
-  const pageTitle = DRAWER_PAGE_TITLES[section]
-  return (
-    <header className="shelf-header drawer-page-header">
-      <div className="drawer-page-title"><SidebarMenuButton onOpen={onOpenSidebar} /><h1>{pageTitle.title}</h1></div>
-      <small>{pageTitle.eyebrow}</small>
-    </header>
-  )
-}
-
-function PinnedBookSeal() {
-  return (
-    <span className="pinned-book-seal" aria-hidden="true">
-      <span className="seal-curve seal-curve-outer" />
-      <span className="seal-curve seal-curve-inner" />
-      <i>M</i>
-    </span>
-  )
 }
 
 async function copyTextToClipboard(text: string) {
@@ -411,11 +131,19 @@ function App() {
   const [lastViewRestored, setLastViewRestored] = useState(false)
   const [screen, setScreen] = useState<Screen>('shelf')
   const [shelfView, setShelfView] = useState<ShelfView>('list')
-  const [sidebarPhase, setSidebarPhase] = useState<'open' | 'closing' | null>(null)
-  const sidebarCloseTimerRef = useRef<number | null>(null)
-  const [sidebarSection, setSidebarSection] = useState<SidebarSection>('shelf')
-  const [drawerPage, setDrawerPage] = useState<SidebarSection | null>(null)
-  const [callingCard, setCallingCard] = useState<CallingCard>(readCallingCard)
+  const {
+    phase: sidebarPhase,
+    section: sidebarSection,
+    page: drawerPage,
+    callingCard,
+    userLabel,
+    companionLabel,
+    companionSubject,
+    open: openSidebar,
+    close: closeSidebar,
+    select: selectSidebarSection,
+    updateCallingCard,
+  } = useDrawer()
   const [bookRecency, setBookRecency] = useState<Record<string, string>>(readBookRecency)
   const [bookPinOverrides, setBookPinOverrides] = useState<Record<string, string | null>>({})
   const [bookStatusOverrides, setBookStatusOverrides] = useState<Record<string, BookStatus>>({})
@@ -432,11 +160,13 @@ function App() {
   const [chapterStarts, setChapterStarts] = useState<number[]>([])
   const [chromeVisible, setChromeVisible] = useState(false)
   const [panel, setPanel] = useState<ReaderPanel>(null)
-  const [theme, setTheme] = useState<ReaderTheme>('day')
-  const [fontSize, setFontSize] = useState(19)
-  const [lineHeight, setLineHeight] = useState(1.8)
-  const [pageMargin, setPageMargin] = useState(8)
-  const [readerTypeface, setReaderTypeface] = useState<ReaderTypeface>('serif')
+  const {
+    theme, setTheme,
+    fontSize, setFontSize,
+    lineHeight, setLineHeight,
+    pageMargin, setPageMargin,
+    readerTypeface, setReaderTypeface,
+  } = useReaderAppearance()
   const [selectedText, setSelectedText] = useState('')
   const [sentenceSelection, setSentenceSelection] = useState<SentenceSelection | null>(null)
   const [bubblePosition, setBubblePosition] = useState<BubblePosition | null>(null)
@@ -462,12 +192,25 @@ function App() {
   const [finishingBook, setFinishingBook] = useState(false)
   const [descriptionOpen, setDescriptionOpen] = useState(false)
   const [toast, setToast] = useState<{ message: string; details?: string } | null>(null)
-  const [importKey, setImportKey] = useState(0)
-  const [importDialogOpen, setImportDialogOpen] = useState(false)
-  const [importParsing, setImportParsing] = useState(false)
-  const [importSaving, setImportSaving] = useState(false)
-  const [preparedImport, setPreparedImport] = useState<PreparedEpubImport | null>(null)
-  const [importDraft, setImportDraft] = useState<ImportDraft>(EMPTY_IMPORT_DRAFT)
+  const [booksRevision, setBooksRevision] = useState(0)
+  const showToast = (message: string, details?: string) => {
+    setToast({ message, details })
+    if (!details) window.setTimeout(() => setToast(null), 2200)
+  }
+  const {
+    open: importDialogOpen,
+    parsing: importParsing,
+    saving: importSaving,
+    prepared: preparedImport,
+    draft: importDraft,
+    openDialog: openImportDialog,
+    closeDialog: closeImportDialog,
+    handleFileChange,
+    handleCoverFileChange,
+    chooseGeneratedCover,
+    updateDraft: updateImportDraft,
+    save: saveImport,
+  } = useImportBookDialog(showToast, () => setBooksRevision((current) => current + 1))
 
   const viewportRef = useRef<HTMLDivElement>(null)
   const flowRef = useRef<HTMLDivElement>(null)
@@ -478,7 +221,6 @@ function App() {
   const activeProgressRef = useRef<ReadingProgress | null>(null)
   const progressWriteRef = useRef(Promise.resolve())
   const bookTouchWriteRef = useRef(Promise.resolve())
-  const importSessionRef = useRef(0)
   const longPressTimerRef = useRef<number | null>(null)
   const longPressTriggeredRef = useRef<string | null>(null)
   const bookRecencyClockRef = useRef(Math.max(
@@ -489,13 +231,7 @@ function App() {
   const currentBookIdRef = useRef(roomBook.id)
   currentBookIdRef.current = roomBook.id
 
-  const userLabel = callingCard.userName.trim() || '我'
-  const companionLabel = callingCard.companionName.trim() || '共读者'
-  const companionSubject = callingCard.companionPronoun === 'name'
-    ? companionLabel
-    : callingCard.companionPronoun
-
-  const booksState = useBooks(importKey)
+  const booksState = useBooks(booksRevision)
 
   const segmentedChapters = useMemo(() => segmentChapters(readerChapters), [readerChapters])
 
@@ -712,13 +448,6 @@ function App() {
     : 'trace-line-annotation'
   const noteEntries = activeNoteTrace?.foxNotes ?? selectedRangeTrace?.foxNotes ?? []
 
-  const showToast = (message: string, details?: string) => {
-    setToast({ message, details })
-    if (!details) {
-      window.setTimeout(() => setToast(null), 2200)
-    }
-  }
-
   const clearToast = () => setToast(null)
 
   const toggleBookPinned = async (book: Book) => {
@@ -734,7 +463,7 @@ function App() {
         [book.id]: updated.pinnedAt ?? null,
       }))
       setRoomMenuOpen(false)
-      setImportKey((key) => key + 1)
+      setBooksRevision((current) => current + 1)
       showToast(pinning ? `《${book.title}》已经盖章置顶。` : `《${book.title}》已取消置顶。`)
     } catch (error) {
       showToast('这枚印章暂时没能落下', error instanceof Error ? error.message : String(error))
@@ -765,14 +494,6 @@ function App() {
     longPressTriggeredRef.current = null
   }
 
-  const updateCallingCard = (patch: Partial<CallingCard>) => {
-    setCallingCard((current) => {
-      const next = { ...current, ...patch }
-      writeCallingCard(next)
-      return next
-    })
-  }
-
   const rememberBookOpened = (book: Book, startReading = false) => {
     bookRecencyClockRef.current = Math.max(Date.now(), bookRecencyClockRef.current + 1)
     const openedAt = new Date(bookRecencyClockRef.current).toISOString()
@@ -791,106 +512,6 @@ function App() {
       .catch((error) => console.error('记录最近打开书籍失败', error))
   }
 
-  const openImportDialog = () => {
-    importSessionRef.current += 1
-    setPreparedImport(null)
-    setImportDraft(EMPTY_IMPORT_DRAFT)
-    setImportParsing(false)
-    setImportSaving(false)
-    setImportDialogOpen(true)
-  }
-
-  const closeImportDialog = () => {
-    if (importSaving) return
-    importSessionRef.current += 1
-    setImportDialogOpen(false)
-    setPreparedImport(null)
-    setImportDraft(EMPTY_IMPORT_DRAFT)
-    setImportParsing(false)
-  }
-
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    const session = importSessionRef.current + 1
-    importSessionRef.current = session
-    setImportParsing(true)
-    setPreparedImport(null)
-
-    try {
-      const result = await prepareEpubFile(file)
-      if (importSessionRef.current !== session) return
-      if (result.ok) {
-        const { prepared } = result
-        setPreparedImport(prepared)
-        setImportDraft({
-          title: prepared.metadata.title || file.name.replace(/\.epub$/i, ''),
-          englishTitle: '',
-          author: prepared.metadata.author || '',
-          description: prepared.metadata.description ?? '',
-          tone: 'rose',
-          coverUrl: prepared.embeddedCoverUrl,
-        })
-      } else {
-        showToast(result.message, result.details)
-      }
-    } catch (error) {
-      showToast('这本书暂时无法打开', error instanceof Error ? error.message : String(error))
-    } finally {
-      if (importSessionRef.current === session) setImportParsing(false)
-    }
-  }
-
-  const handleCoverFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    event.target.value = ''
-    if (!file) return
-    if (!file.type.startsWith('image/')) {
-      showToast('请选择一张图片作为封面。')
-      return
-    }
-    try {
-      const coverUrl = await imageFileToDataUrl(file)
-      setImportDraft((draft) => ({ ...draft, coverUrl }))
-    } catch (error) {
-      showToast('这张封面暂时无法使用', error instanceof Error ? error.message : String(error))
-    }
-  }
-
-  const chooseGeneratedCover = (tone: BookCoverTone) => {
-    setImportDraft((draft) => ({ ...draft, tone, coverUrl: undefined }))
-  }
-
-  const saveImport = async () => {
-    if (!preparedImport || !importDraft.title.trim() || importSaving) return
-    setImportSaving(true)
-    try {
-      const result = await savePreparedEpub(preparedImport, {
-        title: importDraft.title,
-        englishTitle: importDraft.englishTitle,
-        author: importDraft.author,
-        description: importDraft.description,
-        coverUrl: importDraft.coverUrl,
-        coverTone: importDraft.tone,
-      })
-      if (result.ok) {
-        importSessionRef.current += 1
-        setImportDialogOpen(false)
-        setPreparedImport(null)
-        setImportDraft(EMPTY_IMPORT_DRAFT)
-        setImportKey((key) => key + 1)
-        showToast('已经藏入书架。')
-      } else {
-        showToast(result.message, result.details)
-      }
-    } catch (error) {
-      showToast('这本书暂时无法打开', error instanceof Error ? error.message : String(error))
-    } finally {
-      setImportSaving(false)
-    }
-  }
-
   const toggleShelfView = () => {
     const next = shelfView === 'list' ? 'covers' : 'list'
     setShelfView(next)
@@ -906,34 +527,6 @@ function App() {
       showToast('摘录没有进入剪贴板，请再试一次。')
     }
   }
-
-  const openSidebar = useCallback(() => {
-    if (sidebarCloseTimerRef.current !== null) window.clearTimeout(sidebarCloseTimerRef.current)
-    sidebarCloseTimerRef.current = null
-    setSidebarPhase('open')
-  }, [])
-
-  const closeSidebar = useCallback(() => {
-    if (sidebarPhase !== 'open') return
-    setSidebarPhase('closing')
-    sidebarCloseTimerRef.current = window.setTimeout(() => {
-      setSidebarPhase(null)
-      sidebarCloseTimerRef.current = null
-    }, 320)
-  }, [sidebarPhase])
-
-  useEffect(() => () => {
-    if (sidebarCloseTimerRef.current !== null) window.clearTimeout(sidebarCloseTimerRef.current)
-  }, [])
-
-  useEffect(() => {
-    if (sidebarPhase === null) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeSidebar()
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [closeSidebar, sidebarPhase])
 
   const recalculatePagination = useCallback(() => {
     const viewport = viewportRef.current
@@ -1596,7 +1189,7 @@ function App() {
       setRoomMenuOpen(false)
       setScreen('shelf')
       writeLastView({ screen: 'shelf' })
-      setImportKey((key) => key + 1)
+      setBooksRevision((current) => current + 1)
       showToast(`《${bookTitle}》已经移出书房。`)
     } catch (error) {
       showToast('这本书暂时没能移出', error instanceof Error ? error.message : String(error))
@@ -1804,7 +1397,7 @@ function App() {
                     <span>{chapter.chapter}</span><h1>{chapter.title}</h1><p>{chapter.kicker}</p>
                   </div>
                   {segmentedChapters[chapterIndex].paragraphs.map((paragraph, paragraphIndex) => (
-                    <p key={chapter.paragraphs[paragraphIndex]} className={paragraphIndex === 0 ? 'opening-paragraph' : ''}>
+                    chapter.hiddenParagraphIndexes?.includes(paragraphIndex) ? null : <p key={`${paragraphIndex}-${chapter.paragraphs[paragraphIndex]}`} className={paragraphIndex === chapter.openingParagraphIndex ? 'opening-paragraph' : ''}>
                       {paragraph.map((sentence) => {
                         const highlight = chapter.highlight ?? ''
                         const parts = highlight ? sentence.text.split(highlight) : [sentence.text]
@@ -1927,28 +1520,31 @@ function App() {
           </div>
         )}
 
-        {panel && (
-          <section className="reader-panel">
-            <div className="panel-handle" />
-            {panel === 'toc' && <><PanelHeading eyebrow="CONTENTS" title="目录" close={() => setPanel(null)} /><div className="toc-list">{readerChapters.map((chapter, index) => <button className={index === currentChapterIndex ? 'is-current' : ''} type="button" key={chapter.title} onClick={() => jumpToChapter(index)}><span>{chapter.chapter}</span><strong>{chapter.title}</strong><small>{String((chapterStarts[index] ?? 0) + 1).padStart(2, '0')}</small></button>)}</div></>}
-            {panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={() => setPanel(null)} /><div className="trace-list">{bookTraces.length === 0 ? <p className="panel-empty">这本书还没有留下痕迹。</p> : [...bookTraces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => jumpToTrace(trace)}><small>{trace.chapter}</small><blockquote>“<span className={traceLineClass(trace)}>{trace.quote}</span>”</blockquote>{trace.foxNotes?.map((note) => <p key={note.id}><b>{userLabel}</b>：{note.text}</p>)}{trace.fish && <p className="fish-note"><b>{companionLabel}</b>：{trace.fish}</p>}</button>)}</div></>}
-            {panel === 'stats' && <><PanelHeading eyebrow="READING LIFE" title="阅读统计" close={() => setPanel(null)} /><div className="stats-grid stats-grid-v2"><div><strong>{Math.round(((pageIndex + 1) / totalPages) * 100)}<sup>%</sup></strong><small>当前所在位置</small></div><div><strong>{currentChapterIndex + 1} / {readerChapters.length} 章</strong><small>当前章节</small></div><div><strong>{bookTraces.length} 条</strong><small>笔记与划线</small></div></div></>}
-            {panel === 'type' && <><PanelHeading eyebrow="TYPESETTING" title="排版" close={() => setPanel(null)} /><div className="type-settings">
-              <label><span>字号 <small>{fontSize}px</small></span><input type="range" min="16" max="25" value={fontSize} onChange={(event) => { rememberReflowAnchor(); setFontSize(Number(event.target.value)) }} /></label>
-              <label><span>行距 <small>{lineHeight.toFixed(1)}</small></span><input type="range" min="1.5" max="2.3" step="0.1" value={lineHeight} onChange={(event) => { rememberReflowAnchor(); setLineHeight(Number(event.target.value)) }} /></label>
-              <label><span>页边距 <small>{pageMargin}%</small></span><input type="range" min="7" max="18" value={pageMargin} onChange={(event) => { rememberReflowAnchor(); setPageMargin(Number(event.target.value)) }} /></label>
-              <label><span>字体</span><select value={readerTypeface} onChange={(event) => { rememberReflowAnchor(); setReaderTypeface(event.target.value as ReaderTypeface) }}><option value="serif">书页宋体</option><option value="sans">清晰黑体</option></select></label>
-            </div></>}
-          </section>
-        )}
-
-        <nav className={`reader-toolbar ${chromeVisible ? 'is-visible' : ''}`} aria-label="阅读工具">
-          <button aria-label="目录" title="目录" className={panel === 'toc' ? 'is-active' : ''} type="button" onClick={() => setPanel(panel === 'toc' ? null : 'toc')}><ListTree /></button>
-          <button aria-label="页边痕迹" title="页边痕迹" className={panel === 'traces' ? 'is-active' : ''} type="button" onClick={() => setPanel(panel === 'traces' ? null : 'traces')}><Highlighter /></button>
-          <button aria-label="阅读统计" title="阅读统计" className={panel === 'stats' ? 'is-active' : ''} type="button" onClick={() => setPanel(panel === 'stats' ? null : 'stats')}><BarChart3 /></button>
-          <button aria-label={theme === 'day' ? '切换至夜间模式' : '切换至日间模式'} title={theme === 'day' ? '夜间模式' : '日间模式'} type="button" onClick={() => setTheme(theme === 'day' ? 'night' : 'day')}><SunMoon /></button>
-          <button aria-label="排版设置" title="排版设置" className={panel === 'type' ? 'is-active' : ''} type="button" onClick={() => setPanel(panel === 'type' ? null : 'type')}><Type /></button>
-        </nav>
+        <ReaderControls
+          panel={panel}
+          chromeVisible={chromeVisible}
+          chapters={readerChapters}
+          chapterStarts={chapterStarts}
+          currentChapterIndex={currentChapterIndex}
+          traces={bookTraces}
+          userLabel={userLabel}
+          companionLabel={companionLabel}
+          pageIndex={pageIndex}
+          totalPages={totalPages}
+          theme={theme}
+          fontSize={fontSize}
+          lineHeight={lineHeight}
+          pageMargin={pageMargin}
+          readerTypeface={readerTypeface}
+          onPanelChange={setPanel}
+          onThemeChange={setTheme}
+          onFontSizeChange={(value) => { rememberReflowAnchor(); setFontSize(value) }}
+          onLineHeightChange={(value) => { rememberReflowAnchor(); setLineHeight(value) }}
+          onPageMarginChange={(value) => { rememberReflowAnchor(); setPageMargin(value) }}
+          onTypefaceChange={(value) => { rememberReflowAnchor(); setReaderTypeface(value) }}
+          onJumpToChapter={jumpToChapter}
+          onJumpToTrace={jumpToTrace}
+        />
         <Toast toast={toast} onClose={clearToast} />
       </main>
     )
@@ -1956,193 +1552,35 @@ function App() {
 
   return (
     <main className="shelf-shell shelf-shell-v2">
-      {drawerPage && drawerPage !== 'shelf'
+      {drawerPage
         ? <DrawerPageHeader section={drawerPage} onOpenSidebar={openSidebar} />
         : <BrandHeader shelfView={shelfView} onToggleView={toggleShelfView} onOpenSidebar={openSidebar} onOpenImport={openImportDialog} />}
-      {!drawerPage && importDialogOpen && (
-        <div className="import-dialog-backdrop" onClick={closeImportDialog}>
-          <section
-            className="import-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="import-dialog-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <header className="import-dialog-heading">
-              <div><small>ADD TO THE LIBRARY</small><h2 id="import-dialog-title">藏入书籍</h2></div>
-              <button type="button" onClick={closeImportDialog} aria-label="关闭藏书弹窗"><X /></button>
-            </header>
-
-            <label className={`import-file-drop ${preparedImport ? 'has-file' : ''}`}>
-              <span className="import-file-plus">{importParsing ? <span className="import-spinner" /> : <Plus />}</span>
-              <span>
-                <b>{importParsing ? '正在拆封…' : preparedImport ? preparedImport.file.name : '选择一本 EPUB'}</b>
-                <small>{preparedImport ? `${preparedImport.chapters.length} 个章节 · 点击可换一本` : '书名、作者与简介会自动带入'}</small>
-              </span>
-              <input
-                type="file"
-                accept=".epub,application/epub+zip"
-                aria-label="选择 EPUB 文件"
-                onChange={handleFileChange}
-                disabled={importParsing || importSaving}
-              />
-            </label>
-
-            <div className={`import-editor ${preparedImport ? 'is-ready' : ''}`}>
-              <div className="import-fields">
-                <label><span>书名</span><input value={importDraft.title} disabled={!preparedImport} onChange={(event) => setImportDraft((draft) => ({ ...draft, title: event.target.value }))} /></label>
-                <label><span>英文名 <small>可留空</small></span><input value={importDraft.englishTitle} disabled={!preparedImport} onChange={(event) => setImportDraft((draft) => ({ ...draft, englishTitle: event.target.value }))} /></label>
-                <label><span>作者</span><input value={importDraft.author} disabled={!preparedImport} onChange={(event) => setImportDraft((draft) => ({ ...draft, author: event.target.value }))} /></label>
-                <label className="import-description-field"><span>简介 <small>可留空</small></span><textarea value={importDraft.description} disabled={!preparedImport} onChange={(event) => setImportDraft((draft) => ({ ...draft, description: event.target.value }))} /></label>
-              </div>
-
-              <section className="import-cover-controls" aria-labelledby="import-cover-title">
-                <div className="import-section-heading"><span id="import-cover-title">书籍封面</span><small>可随时替换</small></div>
-                <div className="import-cover-actions">
-                  <label className="import-image-button">
-                    <ImagePlus /><span>导入图片</span>
-                    <input type="file" accept="image/*" aria-label="导入封面图片" onChange={handleCoverFileChange} disabled={!preparedImport || importSaving} />
-                  </label>
-                  {preparedImport?.embeddedCoverUrl && (
-                    <button type="button" onClick={() => setImportDraft((draft) => ({ ...draft, coverUrl: preparedImport.embeddedCoverUrl }))}>
-                      <Upload />书内封面
-                    </button>
-                  )}
-                </div>
-                <div className="import-tone-row" aria-label="Marginalia 内部封面颜色">
-                  <small>MG 内部封面</small>
-                  <div>
-                    {COVER_TONES.map((tone) => (
-                      <button
-                        type="button"
-                        key={tone.id}
-                        className={`tone-${tone.id} ${!importDraft.coverUrl && importDraft.tone === tone.id ? 'is-selected' : ''}`}
-                        onClick={() => chooseGeneratedCover(tone.id)}
-                        aria-label={`选择${tone.label}封面`}
-                        aria-pressed={!importDraft.coverUrl && importDraft.tone === tone.id}
-                        disabled={!preparedImport}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            <section className="import-preview" aria-label="书籍预览">
-              <small>PREVIEW</small>
-              <div className="import-preview-book">
-                <BookCover book={{
-                  id: 'import-preview',
-                  title: importDraft.title || '未题名',
-                  englishTitle: importDraft.englishTitle,
-                  author: importDraft.author || '未知作者',
-                  description: importDraft.description,
-                  status: 'wish',
-                  statusLabel: '想读',
-                  progress: 0,
-                  quote: '',
-                  tone: importDraft.tone,
-                  coverUrl: importDraft.coverUrl,
-                }} />
-                <div>
-                  <span>想读</span>
-                  <strong>{importDraft.title || '等待一本书'}</strong>
-                  {importDraft.englishTitle && <em>{importDraft.englishTitle}</em>}
-                  <small>{importDraft.author || '作者会出现在这里'}</small>
-                  <p>{importDraft.description || '简介会和这本书一起留在书架。'}</p>
-                </div>
-              </div>
-            </section>
-
-            <footer className="import-dialog-actions">
-              <button type="button" onClick={closeImportDialog} disabled={importSaving}>暂不藏入</button>
-              <button className="save-import" type="button" onClick={() => { void saveImport() }} disabled={!preparedImport || !importDraft.title.trim() || importParsing || importSaving}>
-                {importSaving ? '正在藏入…' : '藏入书架'}
-              </button>
-            </footer>
-          </section>
-        </div>
-      )}
-      {sidebarPhase && (
-        <>
-          <button className={`shelf-sidebar-backdrop ${sidebarPhase === 'closing' ? 'is-closing' : ''}`} type="button" onClick={closeSidebar} aria-label="关闭侧边栏" />
-          <aside className={`shelf-sidebar ${sidebarPhase === 'closing' ? 'is-closing' : ''}`} aria-label="侧边栏">
-            <header className="sidebar-heading">
-              <div><small>MARGINALIA</small><h2>目录</h2></div>
-            </header>
-            <nav className="drawer-index" aria-label="书房抽屉">
-              <h3><span>书房</span><small>THE READING ROOM</small></h3>
-              {([
-                ['shelf', '书架', '全部藏书', <BookOpenText key="shelf" />],
-                ['thoughts', '念头', '一处私人写作区', <Feather key="thoughts" />],
-                ['visits', '来访', `${companionLabel}的活动记录`, <Fish key="visits" />],
-              ] as const).map(([id, title, description, icon]) => (
-                <button
-                  type="button"
-                  key={id}
-                  className={sidebarSection === id ? 'is-active' : ''}
-                  aria-pressed={sidebarSection === id}
-                  onClick={() => { setSidebarSection(id); setDrawerPage(id === 'shelf' ? null : id); closeSidebar() }}
-                >
-                  {icon}<span><strong>{title}</strong><small>{description}</small></span><ChevronRight />
-                </button>
-              ))}
-              <h3><span>抽屉</span><small>THE DRAWER</small></h3>
-              {([
-                ['calling-card', '名帖', '称呼与落款', <SquarePen key="calling-card" />],
-                ['shadow-books', '影子书', '微信读书旧痕迹', <LibraryBig key="shadow-books" />],
-                ['cloud', '云端书房', '同步、备份与数据', <Cloud key="cloud" />],
-              ] as const).map(([id, title, description, icon]) => (
-                <button
-                  type="button"
-                  key={id}
-                  className={sidebarSection === id ? 'is-active' : ''}
-                  aria-pressed={sidebarSection === id}
-                  onClick={() => { setSidebarSection(id); setDrawerPage(id); closeSidebar() }}
-                >
-                  {icon}<span><strong>{title}</strong><small>{description}</small></span><ChevronRight />
-                </button>
-              ))}
-            </nav>
-          </aside>
-        </>
-      )}
-      {drawerPage ? <section className="drawer-page" aria-live="polite">
-        {sidebarSection === 'calling-card' ? <section className="calling-card drawer-panel" aria-label="名帖设置">
-              <label>
-                <span>我的落款</span>
-                <input aria-label="我的落款" value={callingCard.userName} onChange={(event) => updateCallingCard({ userName: event.target.value })} />
-                <small>写批注时，文字会署上这个名字。</small>
-              </label>
-              <label>
-                <span>共读者的名字</span>
-                <input aria-label="共读者的名字" value={callingCard.companionName} onChange={(event) => updateCallingCard({ companionName: event.target.value })} />
-              </label>
-              <label>
-                <span>如何称呼共读者</span>
-                <select aria-label="如何称呼共读者" value={callingCard.companionPronoun} onChange={(event) => updateCallingCard({ companionPronoun: event.target.value as CompanionPronoun })}>
-                  <option value="她">她</option>
-                  <option value="他">他</option>
-                  <option value="TA">TA</option>
-                  <option value="name">只使用名字</option>
-                </select>
-              </label>
-              <div className="calling-card-preview">
-                <span>{companionLabel}</span>
-                <p>{companionSubject}来过时，留下的文字会以这个名字落款。</p>
-              </div>
-            </section> : (
-              <section className="drawer-placeholder drawer-panel" aria-live="polite">
-                <p>
-                  {sidebarSection === 'thoughts' && '以后可以在这里写下不依附于某一本书的文字。'}
-                  {sidebarSection === 'visits' && `${companionLabel}进入书房、翻过书页或留下文字的踪迹，会安静地收在这里。`}
-                  {sidebarSection === 'shadow-books' && '从微信读书带回的旧划线与想法，会先以影子书的方式留在这里。'}
-                  {sidebarSection === 'cloud' && '跨设备同步、书房备份与 Supabase 连接状态，将在这里统一照看。'}
-                </p>
-                <span>这只抽屉已经留好位置，尚未启用。</span>
-              </section>
-            )}
-      </section> : <>
+      {!drawerPage && importDialogOpen && <ImportBookDialog
+        prepared={preparedImport}
+        draft={importDraft}
+        parsing={importParsing}
+        saving={importSaving}
+        onClose={closeImportDialog}
+        onFileChange={(event) => { void handleFileChange(event) }}
+        onCoverFileChange={(event) => { void handleCoverFileChange(event) }}
+        onDraftChange={updateImportDraft}
+        onChooseGeneratedCover={chooseGeneratedCover}
+        onSave={() => { void saveImport() }}
+      />}
+      {sidebarPhase && <DrawerOverlay
+        phase={sidebarPhase}
+        activeSection={sidebarSection}
+        companionLabel={companionLabel}
+        onClose={closeSidebar}
+        onSelect={selectSidebarSection}
+      />}
+      {drawerPage ? <DrawerPageContent
+        section={drawerPage}
+        callingCard={callingCard}
+        companionLabel={companionLabel}
+        companionSubject={companionSubject}
+        onCallingCardChange={updateCallingCard}
+      /> : <>
       <nav className="shelf-filters" aria-label="书架分类">
         {filters.map((item) => {
           const count = item.id === 'all' ? shelfBooks.length : shelfBooks.filter((book) => book.status === item.id).length
@@ -2235,10 +1673,6 @@ function App() {
       <Toast toast={toast} onClose={clearToast} />
     </main>
   )
-}
-
-function PanelHeading({ eyebrow, title, close }: { eyebrow: string; title: string; close: () => void }) {
-  return <div className="panel-heading"><div><small>{eyebrow}</small><h2>{title}</h2></div><button type="button" onClick={close} aria-label={`关闭${title}`}><X /></button></div>
 }
 
 function Toast({ toast, onClose }: { toast: { message: string; details?: string } | null; onClose: () => void }) {

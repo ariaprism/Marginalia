@@ -17,6 +17,7 @@ export const sampleChapters: ChapterText[] = rainRoomChapters.map((chapter) => (
   title: chapter.title,
   kicker: chapter.kicker,
   paragraphs: chapter.paragraphs,
+  openingParagraphIndex: 0,
   highlight: chapter.highlight,
 }))
 
@@ -25,12 +26,15 @@ export async function loadBookChapters(bookId: string): Promise<ChapterText[]> {
   if (chapters.length === 0) return []
 
   return chapters.map((chapter) => {
-    const extracted = extractChapterText(chapter.html ?? '', chapter.title)
+    const label = chapterLabel(chapter.index)
+    const extracted = extractChapterText(chapter.html ?? '', chapter.title, label)
     return {
-      chapter: chapterLabel(chapter.index),
+      chapter: label,
       title: chapter.title,
       kicker: '',
       paragraphs: extracted.paragraphs,
+      hiddenParagraphIndexes: extracted.hiddenParagraphIndexes,
+      openingParagraphIndex: extracted.openingParagraphIndex,
     }
   })
 }

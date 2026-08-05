@@ -76,4 +76,38 @@ describe('extractChapterText', () => {
     expect(result.title).toBe('雨先抵达')
     expect(result.chapter).toBe('第一章')
   })
+
+  it('标记开头与目录章名重复的原书标题，并把首字下沉移到第一段正文', () => {
+    const result = extractChapterText(
+      xhtml('<h1>第一章</h1><h2>雨先抵达</h2><p>灯亮起来以前，书房先听见了雨。</p>'),
+      '雨先抵达',
+      '第一章',
+    )
+
+    expect(result.paragraphs).toEqual(['第一章', '雨先抵达', '灯亮起来以前，书房先听见了雨。'])
+    expect(result.hiddenParagraphIndexes).toEqual([0, 1])
+    expect(result.openingParagraphIndex).toBe(2)
+  })
+
+  it('版权页等前置章节不启用首字下沉', () => {
+    const result = extractChapterText(
+      xhtml('<h1>版权信息</h1><p>版权所有，未经许可不得转载。</p>'),
+      '版权信息',
+      '第一章',
+    )
+
+    expect(result.hiddenParagraphIndexes).toEqual([0])
+    expect(result.openingParagraphIndex).toBeUndefined()
+  })
+
+  it('不隐藏与目录章名不同的原书小标题', () => {
+    const result = extractChapterText(
+      xhtml('<h2>雨中的来信</h2><p>她在窗边拆开信封。</p>'),
+      '雨先抵达',
+      '第一章',
+    )
+
+    expect(result.hiddenParagraphIndexes).toEqual([])
+    expect(result.openingParagraphIndex).toBe(1)
+  })
 })

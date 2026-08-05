@@ -3,8 +3,17 @@ export type ChapterText = {
   title: string
   kicker: string
   paragraphs: string[]
+  /** 原 EPUB 中与目录章名重复的开头标题；保留索引供 Locator 使用，但阅读器不重复渲染。 */
+  hiddenParagraphIndexes?: number[]
+  /** 第一个适合首字下沉的正文段落；前置页或没有正文段落时为空。 */
+  openingParagraphIndex?: number
   /** 本章中预留的可点击高亮短语，仅用于视觉原型中的模拟书。 */
   highlight?: string
+}
+
+type TextBlock = {
+  text: string
+  tagName: string
 }
 
 /** 块级标签：各自独立成段。 */
@@ -39,19 +48,21 @@ function normalizeWhitespace(text: string): string {
  * - `<br>` 结束当前段（很多书用 br 换行而不是新开 <p>）
  * - 其余行内内容累积进当前段
  */
-function collectParagraphs(root: Element): string[] {
-  const paragraphs: string[] = []
+function collectTextBlocks(root: Element): TextBlock[] {
+  const blocks: TextBlock[] = []
   let buffer = ''
+  let bufferTagName = root.tagName.toUpperCase()
 
   const flush = () => {
     const text = normalizeWhitespace(buffer)
-    if (text) paragraphs.push(text)
+    if (text) blocks.push({ text, tagName: bufferTagName })
     buffer = ''
   }
 
-  const walk = (node: Node) => {
+  const walk = (node: Node, containerTagName: string) => {
     for (const child of Array.from(node.childNodes)) {
       if (child.nodeType === Node.TEXT_NODE) {
+        if (!buffer) bufferTagName = containerTagName
         buffer += child.textContent ?? ''
         continue
       }
@@ -69,19 +80,42 @@ function collectParagraphs(root: Element): string[] {
 
       if (BLOCK_TAGS.has(tagName)) {
         flush()
-        walk(element)
+        walk(element, tagName)
         flush()
         continue
       }
 
       // 行内元素（span/em/strong/a/ruby…）：文字直接接在当前段后面
-      walk(element)
+      walk(element, containerTagName)
     }
   }
 
-  walk(root)
+  walk(root, root.tagName.toUpperCase())
   flush()
-  return paragraphs
+  return blocks
+}
+
+const HEADING_TAGS = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6'])
+const FRONT_MATTER_PATTERN = /版权|版权页|目录|目次|扉页|书名页|出版说明|题记|献词|copyright|contents|title\s*page|colophon|epigraph/i
+
+function comparableHeading(text: string): string {
+  return text.normalize('NFKC').toLocaleLowerCase().replace(/[\s·•—–―:：,，.。第章节篇卷部]/g, '')
+}
+
+function duplicateHeadingIndexes(blocks: TextBlock[], title: string, chapterLabel: string): number[] {
+  const expected = [title, chapterLabel, `${chapterLabel}${title}`]
+    .map(comparableHeading)
+    .filter(Boolean)
+  const hidden: number[] = []
+
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index]
+    if (!HEADING_TAGS.has(block.tagName)) break
+    if (!expected.includes(comparableHeading(block.text))) break
+    hidden.push(index)
+  }
+
+  return hidden
 }
 
 /**
@@ -99,12 +133,20 @@ export function extractChapterText(html: string, title = '', chapterLabel = ''):
   }
 
   const root = doc.body ?? doc.documentElement
-  const paragraphs = root ? collectParagraphs(root) : []
+  const blocks = root ? collectTextBlocks(root) : []
+  const paragraphs = blocks.map((block) => block.text)
+  const hiddenParagraphIndexes = duplicateHeadingIndexes(blocks, title, chapterLabel)
+  const isFrontMatter = FRONT_MATTER_PATTERN.test(`${chapterLabel} ${title}`)
+  const openingParagraphIndex = isFrontMatter
+    ? undefined
+    : blocks.findIndex((block, index) => block.tagName === 'P' && !hiddenParagraphIndexes.includes(index))
 
   return {
     chapter: chapterLabel,
     title,
     kicker: '',
     paragraphs,
+    hiddenParagraphIndexes,
+    openingParagraphIndex: openingParagraphIndex !== undefined && openingParagraphIndex >= 0 ? openingParagraphIndex : undefined,
   }
 }

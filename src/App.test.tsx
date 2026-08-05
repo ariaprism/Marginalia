@@ -56,7 +56,9 @@ async function seedTestBook({
 async function renderWithRainRoom(withTraces = false) {
   await seedTestBook({ withTraces })
   const result = render(<App />)
-  await screen.findByRole('button', { name: /打开《雨夜书房》/ }, { timeout: 10_000 })
+  // 冷启动或并行 CI 中 fake-indexeddb 建库可能明显慢于本地热跑；
+  // 这里等待测试夹具就绪，不改变产品侧加载语义。
+  await screen.findByRole('button', { name: /打开《雨夜书房》/ }, { timeout: 20_000 })
   return result
 }
 
