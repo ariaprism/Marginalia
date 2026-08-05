@@ -117,14 +117,17 @@ describe('traceStore', () => {
 
   it('edits a note in place without moving it or changing its timestamp', async () => {
     const { locator } = anchor(0, 1)
-    const first = await persistNote(locator, '原文', undefined, false, '2025-01-01T10:00:00.000Z')
+    const originalCreatedAt = '2025-01-01T10:00:00.000Z'
+    const first = await persistNote(locator, '原文', undefined, false, originalCreatedAt)
     await persistNote(locator, '第二条', undefined, false, '2025-01-02T10:00:00.000Z')
 
     await persistNote(locator, '改过的第一条', first)
     const traces = await read()
+    const annotations = await getAnnotations(BOOK_ID)
+    const edited = annotations.find((annotation) => annotation.id === first)
 
     expect(traces[0].foxNotes?.map((note) => note.text)).toEqual(['改过的第一条', '第二条'])
-    expect(traces[0].foxNotes?.[0].createdAt).toBe('01/01/18：00')
+    expect(edited?.createdAt).toBe(originalCreatedAt)
   })
 
   it('removes a single note without touching the rest of the trace', async () => {
