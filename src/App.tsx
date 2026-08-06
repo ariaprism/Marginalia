@@ -39,7 +39,7 @@ import {
   removeNote as deleteNoteRecord,
 } from './data/local/traceStore'
 import { cleanupLegacySampleData } from './data/local/seedSampleTraces'
-import type { Locator } from './domain/locator'
+import { createLocator, extractContext, type Locator } from './domain/locator'
 import {
   createReadingProgress,
   moveReadingBookmark,
@@ -81,6 +81,7 @@ import {
   segmentChapters,
 } from './reader/sentenceAnchor'
 import type { NoteEntry, Trace } from './reader/trace'
+import { pageAtTextOffset, textOffsetAtPage } from './reader/pageTextAnchor'
 import './App.css'
 
 
@@ -88,6 +89,8 @@ type ReflowAnchor = { chapterIndex: number; ratio: number }
 type SentenceSelection = { chapterIndex: number; start: number; end: number }
 type BubblePosition = { left: number; top: number; placement: 'above' | 'below' }
 type PageAnchor = SentenceSelection
+const DAY_THEME_COLOR = '#e5d7c3'
+const NIGHT_THEME_COLOR = '#211d1b'
 function traceLineClass(trace: Trace) {
   if (trace.highlighted) return 'trace-line-highlight'
   if (trace.foxNotes?.length) return 'trace-line-annotation'
@@ -236,6 +239,18 @@ function App() {
   const segmentedChapters = useMemo(() => segmentChapters(readerChapters), [readerChapters])
 
   useEffect(() => {
+    let themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+    if (!themeColor) {
+      themeColor = document.createElement('meta')
+      themeColor.name = 'theme-color'
+      document.head.append(themeColor)
+    }
+    themeColor.content = screen === 'reader' && theme === 'night'
+      ? NIGHT_THEME_COLOR
+      : DAY_THEME_COLOR
+  }, [screen, theme])
+
+  useEffect(() => {
     let cancelled = false
     cleanupLegacySampleData().catch((error) => console.error('清理旧示例痕迹失败', error))
     getAllReadingProgress()
@@ -378,18 +393,75 @@ function App() {
     return chapterIndex
   }, [chapterStarts])
 
+  const sentenceElement = useCallback((chapterIndex: number, sentenceIndex: number) => (
+    flowRef.current?.querySelector<HTMLElement>(
+      `[data-chapter-index="${chapterIndex}"] .sentence-unit[data-sentence-index="${sentenceIndex}"]`,
+    ) ?? null
+  ), [])
+
   const locatorForPage = useCallback((targetPage: number): Locator | null => {
     const mapped = pageAnchorsRef.current[targetPage]
-    if (mapped) return locatorForSelection(mapped)
+    if (mapped) {
+      const fallback = locatorForSelection(mapped)
+      const viewport = viewportRef.current
+      const flow = flowRef.current
+      const run = segmentedChapters[mapped.chapterIndex]?.sentences[mapped.start]
+      const element = sentenceElement(mapped.chapterIndex, mapped.start)
+      if (!fallback || !viewport || !flow || !run || !element || viewport.clientWidth < 1) return fallback
+
+      // 一条长句可能横跨两页。折页要锚在当前页真正出现的字符上，不能总落回句首页。
+      const relativeOffset = textOffsetAtPage(
+        element,
+        targetPage,
+        flow.getBoundingClientRect().left,
+        viewport.clientWidth,
+      )
+      if (relativeOffset === null) return fallback
+
+      const paragraph = readerChapters[mapped.chapterIndex]?.paragraphs[run.paragraphIndex] ?? ''
+      const start = run.charOffset + relativeOffset
+      const end = Math.min(paragraph.length, start + 24)
+      if (end <= start) return fallback
+      return createLocator(roomBook.id, {
+        chapterIndex: mapped.chapterIndex,
+        elementPath: [run.paragraphIndex],
+        textOffset: start,
+        ...extractContext(paragraph, start, end),
+      })
+    }
 
     // jsdom 与极少数尚未完成布局的浏览器拿不到 DOM rect；退到本章第一句，
     // 仍然保存稳定 Locator，不能退回动态页码。
     const chapterIndex = chapterIndexForPage(targetPage)
     const first = segmentedChapters[chapterIndex]?.sentences[0]
     return first ? locatorForSelection({ chapterIndex, start: first.index, end: first.index }) : null
-  }, [chapterIndexForPage, locatorForSelection, segmentedChapters])
+  }, [chapterIndexForPage, locatorForSelection, readerChapters, roomBook.id, segmentedChapters, sentenceElement])
 
   const pageForLocator = useCallback((locator: Locator): number | null => {
+    const viewport = viewportRef.current
+    const flow = flowRef.current
+    const paragraphIndex = locator.position.elementPath[0]
+    const paragraph = readerChapters[locator.position.chapterIndex]?.paragraphs[paragraphIndex]
+    const run = segmentedChapters[locator.position.chapterIndex]?.paragraphs[paragraphIndex]
+      ?.find((candidate) => locator.position.textOffset >= candidate.charOffset
+        && locator.position.textOffset < candidate.charOffset + candidate.text.length)
+    const exactTextStillMatches = paragraph?.slice(
+      locator.position.textOffset,
+      locator.position.textOffset + locator.position.selectedText.length,
+    ) === locator.position.selectedText
+    if (exactTextStillMatches && viewport && flow && run && viewport.clientWidth > 0) {
+      const element = sentenceElement(locator.position.chapterIndex, run.index)
+      if (element) {
+        const exactPage = pageAtTextOffset(
+          element,
+          locator.position.textOffset - run.charOffset,
+          flow.getBoundingClientRect().left,
+          viewport.clientWidth,
+        )
+        if (exactPage !== null) return exactPage
+      }
+    }
+
     const resolved = resolveLocator(
       locator.position,
       segmentedChapters,
@@ -399,7 +471,7 @@ function App() {
     return sentencePagesRef.current.get(`${resolved.chapterIndex}:${resolved.start}`)
       ?? chapterStarts[resolved.chapterIndex]
       ?? null
-  }, [chapterStarts, readerChapters, segmentedChapters])
+  }, [chapterStarts, readerChapters, segmentedChapters, sentenceElement])
 
   const writeProgress = useCallback((progress: ReadingProgress) => {
     adoptActiveProgress(progress)

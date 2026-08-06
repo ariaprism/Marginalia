@@ -74,6 +74,7 @@
 - [x] 补齐 Phase 1B 架构、本地数据、验收故事、已知边界与非目标文档，并更新 README 当前阶段
 - [x] 配置 GitHub Pages 项目路径与自动部署工作流：每次推送 `main` 先通过 test／lint／build，再发布 `dist`
 - [x] 发布首个 GitHub Pages 验收站 `https://ariaprism.github.io/Marginalia/`，启用 HTTPS 并确认公网返回 200
+- [x] 修正跨页长句上的折页定位：折页锚到当前页实际字符偏移；阅读主题、字号、行距、页边距与字体跨刷新保留，夜间阅读同步浏览器主题色
 
 ## 正在进行
 
@@ -140,6 +141,7 @@
 - 2026-08-05：`App.tsx` 第一轮 feature 拆分后由 2269 行／约 103 KB 降至 1703 行／约 76 KB，`npm test`（95 项通过）、`npm run build`、`npm run lint` 通过
 - 2026-08-05：Phase 1B 文档与 GitHub Pages 工作流接通后，`npm test`（95 项通过）、`npm run build`、`npm run lint` 通过；生产产物资源路径确认为 `/Marginalia/assets/...`
 - 2026-08-05：修正 CI 中依赖本机时区的痕迹时间断言；GitHub Actions 的 95 项测试、lint、build、Pages 上传与部署全部通过，`https://ariaprism.github.io/Marginalia/` 公网返回 HTTP 200
+- 2026-08-06：跨页折页字符锚点、阅读排版偏好持久化与夜间浏览器主题色联动完成后，`npm test`（97 项通过）、`npm run build`、`npm run lint` 通过
 
 ## 近期决定
 

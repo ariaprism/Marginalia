@@ -520,6 +520,38 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByRole('article')).toHaveStyle({ '--reader-font-family': 'var(--font-reading-sans)' })
   })
 
+  it('restores reader appearance and follows night mode with the browser theme color', async () => {
+    const { unmount } = await renderWithRainRoom()
+    fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》|继续阅读《雨夜书房》/ }))
+    fireEvent.click(screen.getByRole('button', { name: '排版设置' }))
+    fireEvent.change(screen.getByRole('slider', { name: /字号/ }), { target: { value: '22' } })
+    fireEvent.change(screen.getByRole('slider', { name: /行距/ }), { target: { value: '2.1' } })
+    fireEvent.change(screen.getByRole('slider', { name: /页边距/ }), { target: { value: '12' } })
+    fireEvent.change(screen.getByRole('combobox', { name: '字体' }), { target: { value: 'sans' } })
+    fireEvent.click(screen.getByRole('button', { name: '切换至夜间模式' }))
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem('marginalia:reader-appearance')).toContain('"theme":"night"')
+      expect(document.querySelector('meta[name="theme-color"]')).toHaveAttribute('content', '#211d1b')
+    })
+
+    unmount()
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: '返回书架' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByLabelText('正在打开书籍')).not.toBeInTheDocument())
+    expect(document.querySelector('.reader-shell')).toHaveClass('reader-night')
+    expect(screen.getByRole('article')).toHaveStyle({
+      '--reader-font-size': '22px',
+      '--reader-line-height': '2.1',
+      '--reader-margin': '12%',
+      '--reader-font-family': 'var(--font-reading-sans)',
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '返回书架' }))
+    await waitFor(() => expect(document.querySelector('meta[name="theme-color"]')).toHaveAttribute('content', '#e5d7c3'))
+  })
+
   it('uses the requested reading layout defaults', async () => {
     await renderWithRainRoom()
     fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》|继续阅读《雨夜书房》/ }))

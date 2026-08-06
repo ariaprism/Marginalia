@@ -6,14 +6,60 @@ export type CallingCard = {
   companionName: string
   companionPronoun: CompanionPronoun
 }
+export type ReaderTheme = 'day' | 'night'
+export type ReaderTypeface = 'serif' | 'sans'
+export type ReaderAppearance = {
+  theme: ReaderTheme
+  fontSize: number
+  lineHeight: number
+  pageMargin: number
+  readerTypeface: ReaderTypeface
+}
 
 const LAST_VIEW_KEY = 'marginalia:last-view'
 const BOOK_RECENCY_KEY = 'marginalia:book-recency'
 const CALLING_CARD_KEY = 'marginalia:calling-card'
+const READER_APPEARANCE_KEY = 'marginalia:reader-appearance'
 const DEFAULT_CALLING_CARD: CallingCard = {
   userName: '小狐狸',
   companionName: '小鱼',
   companionPronoun: '她',
+}
+export const DEFAULT_READER_APPEARANCE: ReaderAppearance = {
+  theme: 'day',
+  fontSize: 19,
+  lineHeight: 1.8,
+  pageMargin: 8,
+  readerTypeface: 'serif',
+}
+
+function numberInRange(value: unknown, min: number, max: number, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max
+    ? value
+    : fallback
+}
+
+export function readReaderAppearance(): ReaderAppearance {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(READER_APPEARANCE_KEY) ?? '{}') as Partial<ReaderAppearance>
+    return {
+      theme: stored.theme === 'night' ? 'night' : 'day',
+      fontSize: numberInRange(stored.fontSize, 16, 25, DEFAULT_READER_APPEARANCE.fontSize),
+      lineHeight: numberInRange(stored.lineHeight, 1.5, 2.3, DEFAULT_READER_APPEARANCE.lineHeight),
+      pageMargin: numberInRange(stored.pageMargin, 7, 18, DEFAULT_READER_APPEARANCE.pageMargin),
+      readerTypeface: stored.readerTypeface === 'sans' ? 'sans' : 'serif',
+    }
+  } catch {
+    return DEFAULT_READER_APPEARANCE
+  }
+}
+
+export function writeReaderAppearance(appearance: ReaderAppearance) {
+  try {
+    window.localStorage.setItem(READER_APPEARANCE_KEY, JSON.stringify(appearance))
+  } catch {
+    // 阅读偏好写不进去时只在本次打开期间生效。
+  }
 }
 
 export function readLastView(): LastView {
