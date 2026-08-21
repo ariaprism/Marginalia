@@ -7,8 +7,10 @@ import {
   Copy,
   CornerUpLeft,
   Highlighter,
+  Inbox,
   MessageSquareText,
   Pin,
+  Send,
   SquarePen,
   Trash2,
   X,
@@ -75,6 +77,7 @@ import {
 import { loadBookChapters, type ChapterText } from './reader/bookContent'
 import { ReaderControls, type ReaderPanel } from './features/reader/ReaderControls'
 import { useReaderAppearance } from './features/reader/useReaderAppearance'
+import { ReadingExchangeDialog } from './features/reading-exchange/ReadingExchangeDialog'
 import {
   locatorFromSentenceRange,
   resolveLocator,
@@ -155,6 +158,7 @@ function App() {
   const [roomMenuOpen, setRoomMenuOpen] = useState(false)
   const [deleteBookDialogOpen, setDeleteBookDialogOpen] = useState(false)
   const [deletingBook, setDeletingBook] = useState(false)
+  const [exchangeDialog, setExchangeDialog] = useState<'export' | 'import' | null>(null)
   const [filter, setFilter] = useState<ShelfFilter>('all')
   const [readerChapters, setReaderChapters] = useState<ChapterText[]>([])
   const [readerChaptersReady, setReaderChaptersReady] = useState(true)
@@ -515,10 +519,11 @@ function App() {
     () => bookTraces.find((trace) => trace.id === noteTargetTraceId),
     [bookTraces, noteTargetTraceId],
   )
-  const noteQuoteLineClass = (activeNoteTrace ?? selectedRangeTrace)?.highlighted
+  const noteTrace = activeNoteTrace ?? selectedRangeTrace
+  const noteQuoteLineClass = noteTrace?.highlighted
     ? 'trace-line-highlight'
     : 'trace-line-annotation'
-  const noteEntries = activeNoteTrace?.foxNotes ?? selectedRangeTrace?.foxNotes ?? []
+  const noteEntries = noteTrace?.foxNotes ?? []
 
   const clearToast = () => setToast(null)
 
@@ -1324,6 +1329,12 @@ function App() {
                 {roomBook.status === 'finished' ? <CornerUpLeft /> : <Check />}
                 {roomBook.status === 'finished' ? '从头重温' : '标记读完'}
               </button>
+              <button type="button" role="menuitem" onClick={() => { setRoomMenuOpen(false); setExchangeDialog('export') }}>
+                <Send />递一页给她
+              </button>
+              <button type="button" role="menuitem" onClick={() => { setRoomMenuOpen(false); setExchangeDialog('import') }}>
+                <Inbox />收回她的页边文字
+              </button>
               <button type="button" role="menuitem" onClick={() => { setRoomMenuOpen(false); setDeleteBookDialogOpen(true) }}>
                 <Trash2 />移出书房
               </button>
@@ -1403,6 +1414,18 @@ function App() {
               </div>
             </section>
           </div>
+        )}
+        {exchangeDialog && (
+          <ReadingExchangeDialog
+            mode={exchangeDialog}
+            book={{ id: roomBook.id, title: roomBook.title, author: roomBook.author }}
+            chapters={readerChapters}
+            userName={userLabel}
+            companionName={companionLabel}
+            onClose={() => setExchangeDialog(null)}
+            onImported={refreshTraces}
+            onNotice={showToast}
+          />
         )}
         <Toast toast={toast} onClose={clearToast} />
       </main>
@@ -1581,6 +1604,10 @@ function App() {
                 <div className="sent-note-heading"><b>{userLabel}</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}><SquarePen aria-hidden="true" /></button>{noteMenuTargetId === note.id && <span className="note-action-menu"><button type="button" onClick={() => reviseNote(note)}>修订</button><button type="button" onClick={() => removeNote(note.id)}>抹去文字</button></span>}</span></div>
                 <p>{note.text}</p>
               </article>)}
+              {noteTrace?.fish && <article className="sent-note companion-sent-note">
+                <div className="sent-note-heading"><b>{companionLabel}</b><time>{noteTrace.fishAt}</time></div>
+                <p>{noteTrace.fish}</p>
+              </article>}
               <textarea value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Thoughts..." autoFocus={!noteEntries.length} />
               <div className="composer-actions"><button type="button" onClick={() => {
                 if (editingNoteId) {

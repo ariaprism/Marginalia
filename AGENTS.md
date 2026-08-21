@@ -8,9 +8,9 @@
 
 ## 当前阶段
 
-- Phase：Phase 1B — Living Book / 真实 EPUB（Phase 0 地基与 Phase 1A 视觉原型已完成）
+- Phase：Phase 2 — Cloud Ink / 云端墨水（`v0.2 Living Book` 已完成）
 - 状态：进行中
-- 当前目标：在 GitHub Pages 验收站与真实设备完成“纯真实书架”的最终验收，形成 `v0.2 Living Book` 检查点。代码第一轮 feature 边界、Phase 1B 文档与自动部署已经整理完成。
+- 当前目标：先定义并用本地夹具验证“共读交换包”与本地优先同步语义，再据此建立 Supabase schema、RLS、私有 Storage 与 outbox；不让云端表结构反向决定产品语义。
 
 ## 已完成
 
@@ -75,18 +75,34 @@
 - [x] 配置 GitHub Pages 项目路径与自动部署工作流：每次推送 `main` 先通过 test／lint／build，再发布 `dist`
 - [x] 发布首个 GitHub Pages 验收站 `https://ariaprism.github.io/Marginalia/`，启用 HTTPS 并确认公网返回 200
 - [x] 修正跨页长句上的折页定位：折页锚到当前页实际字符偏移；阅读主题、字号、行距、页边距与字体跨刷新保留，夜间阅读同步浏览器主题色
+- [x] 完成真实设备与 GitHub Pages 的 `v0.2 Living Book` 验收，Phase 1B 正式收口
+- [x] 建立 `v1.0` 共读交换契约：单书单章、批注与有限上下文、JSON 规范格式、Markdown 阅读视图及共读者回复模板
+- [x] 接通书籍小房间“递一页给她／收回她的页边文字”，支持按章勾选批注、导出、回复预览与幂等写回本地页边文字
+- [x] 用《雨夜书房》夹具覆盖章首／章末上下文、错误格式、回复写回、只读未回与重复导入
+- [x] 修复共读回复只在书籍小房间显示、阅读页“重温批注”遗漏共读者文字；文件交换载荷移除 Locator、元素路径与字符偏移
+- [x] 确认 `docs/SYNC_SEMANTICS.md`：本地第一写入、自动双向同步、最近停留与书房内容同步、设备排版偏好留本地、outbox、少量冲突、删除传播、恢复及云端状态
+- [x] 完成 `docs/CLOUD_DATA_DESIGN.md`：Phase 2 远端表、稳定 ID、变化游标、本地 outbox／syncState、双向算法、冲突、RLS、私有 Storage 与分阶段验收设计
+- [x] 升级 IndexedDB v2，新增与业务写入同一事务的 outbox 及按云端账号保存游标的 syncState
+- [x] 建立不依赖 Supabase 的同步操作、待寄合并、推送／拉取状态机与确定性 fake remote
+- [x] 用自动测试验证断网保留与重试、操作幂等、双设备独立新增合并、删除不复活及被覆盖操作整链出队
 
 ## 正在进行
 
-- [ ] 实际浏览器验收空书房、首次导入、长书阅读与刷新恢复的桌面／手机流程
+- [ ] 用一册真实 EPUB 完成首次人工往返：同章章首／章中／章末批注 → 导出给小鱼 → 导入回复 → 刷新恢复
+- [x] 新建独立 Marginalia Supabase 项目并生成迁移，验证 schema、RLS、私有 Storage 与所有权隔离
+- [x] 将 Supabase URL 与 publishable key 接入 GitHub Pages 构建；localhost 默认保持本地施工书房
+- [x] 云端书房显示邮箱门帖、当前身份、待寄数量、同步状态、立即收好与从云端恢复入口；未完成的远端动作保持禁用
+- [ ] 接通真实 Supabase push／pull、文件传输、登录、触发调度与云端书房状态
 
 ## 下次开工：直接从这里继续
 
 当小狐狸说“小G，我们接下来干嘛”时，无需重新盘视觉稿，直接回答并推进下面的顺序：
 
-1. 完成一轮真实设备验收：空书房 → 导入 EPUB → 阅读／折页／划线／批注 → 刷新恢复 → 删除。
-2. 线上验收稳定后形成 `v0.2 Living Book` 检查点；分页、Locator、痕迹与折页控制器的第二轮拆分可在不改变语义时继续渐进整理。
-3. 检查点稳定后再进入 Phase 2：先设计本地优先同步语义，再建立 Supabase schema、RLS、Storage 与 outbox。
+1. 先做最小、版本化的共读交换契约与本地往返夹具；JSON 是可导入的规范格式，Markdown 只作为给人／共读者阅读的派生视图。
+2. 交换契约至少覆盖书与章节身份、用户批注、有限正文上下文、Locator、actor、时间、visibility、幂等键及逐项导入结果；不得默认导出整章或整本正文。
+3. 由契约反推本地优先同步语义：稳定 ID、outbox 操作、重试幂等、冲突、删除传播和断网恢复。
+4. 再按当前 Supabase 官方文档建立 schema、RLS、私有 Storage、登录与同步；完成跨设备恢复后形成 `v0.3 Cloud Ink`。
+5. “念头”先保留说明壳，等明确它是独立随笔、待读入口还是书内痕迹聚合后再实现；“来访”以后直接消费真实 MCP session / visit events，不先制造假记录。
 
 小狐狸不需要提前准备代码；遇到会改变产品语义的选择（例如上传入口的文案、解析失败的处理方式）再请小狐狸决定。
 
@@ -142,6 +158,11 @@
 - 2026-08-05：Phase 1B 文档与 GitHub Pages 工作流接通后，`npm test`（95 项通过）、`npm run build`、`npm run lint` 通过；生产产物资源路径确认为 `/Marginalia/assets/...`
 - 2026-08-05：修正 CI 中依赖本机时区的痕迹时间断言；GitHub Actions 的 95 项测试、lint、build、Pages 上传与部署全部通过，`https://ariaprism.github.io/Marginalia/` 公网返回 HTTP 200
 - 2026-08-06：跨页折页字符锚点、阅读排版偏好持久化与夜间浏览器主题色联动完成后，`npm test`（97 项通过）、`npm run build`、`npm run lint` 通过
+- 2026-08-18：共读交换契约与书籍小房间双入口接通后，`npm test`（101 项通过）、`npm run build`、`npm run lint` 通过；自动浏览器视觉验收因当前无可连接浏览器实例未执行
+- 2026-08-21：真实共读往返发现并修复阅读页详情遗漏共读者文字，精简交换包的内部定位字段；`npm test`（101 项通过）、`npm run build`、`npm run lint` 通过。首次定向测试受既有 Vitest worker 启动超时影响未加载测试，随后全量复跑稳定通过
+- 2026-08-21：IndexedDB outbox／syncState 与 fake remote 同步地基完成；定向 9 项及全量 `npm test -- --maxWorkers=1`（110 项通过）、`npm run build`、`npm run lint`、`git diff --check` 通过。默认并发定向测试曾在 worker 启动前超时，单 worker 稳定通过
+- 2026-08-21：独立 Supabase 项目 `Marginalia`（新加坡）建立；9 张 public 表全部启用 RLS，安全顾问 0 警告，匿名无业务表权限，双账号事务验证只能读取本人书与变化流；私有 `library` bucket、三笔正式 migration、生成类型与可选前端客户端配置归档；`npm run build`、`npm run lint`、`npm test -- --maxWorkers=1`（110 项通过）
+- 2026-08-22：GitHub Actions 写入 `SUPABASE_URL` variable 与 `SUPABASE_PUBLISHABLE_KEY` secret；云端书房正式／本地环境分流及入口完成，定向 25 项测试、`npm run build`、`npm run lint` 通过；全量 112 项中 111 项通过，唯一既有书房进入阅读器用例受 20 秒超时影响，随后单独复跑 1.96 秒通过
 
 ## 近期决定
 
@@ -178,6 +199,12 @@
 - 2026-07-30：置顶只划分书架优先组，组内仍按最近主动打开排序；折页是否实心只表示当前动态页正是唯一折页所在页。
 - 2026-07-30：读完由末页尾笺或详情菜单显式确认；“从头重温”回到在读并重置自动阅读位置，但保留折页与全部痕迹。
 - 2026-07-30：全局侧栏命名为“书房抽屉”；一级入口为名帖、念头、来访、影子书和云端书房，后四者当前只留说明壳。
+- 2026-08-18：`v0.2 Living Book` 经真实设备验收后完成；Phase 2 先用版本化共读交换包验证未来 MCP 的读写语义，再设计本地优先同步并接入 Supabase。“念头”不抢在云端地基与共读契约之前实现。
+- 2026-08-21：文件交换与未来 MCP 只向共读者提供短语义 ID、批注与有限正文，Locator 和重锚定由 Marginalia 内部处理；MCP 稳定后文件入口降级为备份／诊断能力，不再占据书籍主操作。
+- 2026-08-21：确认本地优先自动双向同步语义；最近停留、书籍与痕迹、折页、名帖、置顶和最近打开跨设备同步，阅读排版偏好留本地；同一批注允许小鱼多次重访，第一版不增加仅 Wi-Fi 上传 EPUB。
+- 2026-08-21：完成 Phase 2 云端数据设计；业务实体沿用本地稳定字符串 ID，所有远端行带 Auth 所有权，软删除配合单调变化游标，Realtime 只触发补拉；先以 fake remote 完成本地同步地基，再连接真实 Supabase。
+- 2026-08-21：Marginalia 使用独立 Supabase 项目，不与 `tidal-notes` 混表；暂停的 `Bubble` 暂不删除。云端项目 ref 为 `dipstslcooovpyclouai`，区域为 `ap-southeast-1`。
+- 2026-08-22：真实藏书同步只在 GitHub Pages 正式站启用；localhost 默认不连接真实云端，未来需要调试时使用同项目内受 RLS 隔离的测试账号。项目 URL 与 publishable key 由部署环境提供，不让用户在界面手填。
 
 ## GitHub 操作说明
 

@@ -4,7 +4,9 @@ import type { Chapter } from '../../domain/chapter'
 import type { Highlight } from '../../domain/highlight'
 import type { Marginalia } from '../../domain/marginalia'
 import type { ReadingProgress } from '../../domain/readingProgress'
-import { getAllByIndex, openMarginaliaDB, withTransaction } from './db'
+import { createSyncOperation, type SyncEntityType } from '../sync/operations'
+import { getAllByIndex, openMarginaliaDB, withStoresTransaction, withTransaction } from './db'
+import { putOutboxOperation } from './syncStore'
 
 export type StoredEpubFile = {
   bookId: string
@@ -22,7 +24,36 @@ function chapterId(bookId: string, index: number): string {
 }
 
 export async function saveBook(book: Book): Promise<void> {
-  await withTransaction('books', 'readwrite', (store) => store.put(book))
+  await putRecordWithOutbox('books', 'book', book.id, book, book.updatedAt)
+}
+
+async function putRecordWithOutbox<T>(
+  storeName: string,
+  entityType: SyncEntityType,
+  entityId: string,
+  record: T,
+  occurredAt?: string,
+): Promise<void> {
+  await withStoresTransaction([storeName, 'outbox'], 'readwrite', (transaction) => {
+    transaction.objectStore(storeName).put(record)
+    putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+      entityType, entityId, operation: 'upsert', payload: record, occurredAt,
+    }))
+  })
+}
+
+async function deleteRecordWithOutbox(
+  storeName: string,
+  entityType: SyncEntityType,
+  entityId: string,
+  occurredAt = new Date().toISOString(),
+): Promise<void> {
+  await withStoresTransaction([storeName, 'outbox'], 'readwrite', (transaction) => {
+    transaction.objectStore(storeName).delete(entityId)
+    putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+      entityType, entityId, operation: 'delete', occurredAt,
+    }))
+  })
 }
 
 export async function getBook(id: string): Promise<Book | undefined> {
@@ -40,7 +71,7 @@ export async function touchBook(
 ): Promise<Book | undefined> {
   const db = await openMarginaliaDB()
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction('books', 'readwrite')
+    const transaction = db.transaction(['books', 'outbox'], 'readwrite')
     const store = transaction.objectStore('books')
     const request = store.get(bookId)
     let touched: Book | undefined
@@ -49,6 +80,9 @@ export async function touchBook(
       if (!book) return
       touched = { ...book, lastOpenedAt: now, status: status ?? book.status, updatedAt: now }
       store.put(touched)
+      putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+        entityType: 'book', entityId: bookId, operation: 'upsert', payload: touched, occurredAt: now,
+      }))
     }
     transaction.oncomplete = () => resolve(touched)
     transaction.onerror = () => reject(transaction.error)
@@ -63,7 +97,7 @@ export async function setBookPinned(
 ): Promise<Book | undefined> {
   const db = await openMarginaliaDB()
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction('books', 'readwrite')
+    const transaction = db.transaction(['books', 'outbox'], 'readwrite')
     const store = transaction.objectStore('books')
     const request = store.get(bookId)
     let updated: Book | undefined
@@ -72,6 +106,9 @@ export async function setBookPinned(
       if (!book) return
       updated = { ...book, pinnedAt: pinned ? now : undefined, updatedAt: now }
       store.put(updated)
+      putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+        entityType: 'book', entityId: bookId, operation: 'upsert', payload: updated, occurredAt: now,
+      }))
     }
     transaction.oncomplete = () => resolve(updated)
     transaction.onerror = () => reject(transaction.error)
@@ -86,7 +123,7 @@ export async function setBookStatus(
 ): Promise<Book | undefined> {
   const db = await openMarginaliaDB()
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction('books', 'readwrite')
+    const transaction = db.transaction(['books', 'outbox'], 'readwrite')
     const store = transaction.objectStore('books')
     const request = store.get(bookId)
     let updated: Book | undefined
@@ -95,6 +132,9 @@ export async function setBookStatus(
       if (!book) return
       updated = { ...book, status, updatedAt: now }
       store.put(updated)
+      putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+        entityType: 'book', entityId: bookId, operation: 'upsert', payload: updated, occurredAt: now,
+      }))
     }
     transaction.oncomplete = () => resolve(updated)
     transaction.onerror = () => reject(transaction.error)
@@ -104,7 +144,12 @@ export async function setBookStatus(
 
 export async function saveEpubFile(bookId: string, file: Blob): Promise<void> {
   const record: StoredEpubFile = { bookId, file, addedAt: new Date().toISOString() }
-  await withTransaction('epubFiles', 'readwrite', (store) => store.put(record))
+  await withStoresTransaction(['epubFiles', 'outbox'], 'readwrite', (transaction) => {
+    transaction.objectStore('epubFiles').put(record)
+    putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+      entityType: 'epubFile', entityId: bookId, operation: 'upload_file', payload: { bookId }, occurredAt: record.addedAt,
+    }))
+  })
 }
 
 export async function getEpubFile(bookId: string): Promise<Blob | undefined> {
@@ -115,11 +160,14 @@ export async function getEpubFile(bookId: string): Promise<Blob | undefined> {
 export async function saveChapters(bookId: string, chapters: Chapter[]): Promise<void> {
   const db = await openMarginaliaDB()
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction('chapters', 'readwrite')
+    const transaction = db.transaction(['chapters', 'outbox'], 'readwrite')
     const store = transaction.objectStore('chapters')
     for (const chapter of chapters) {
       const record: StoredChapter = { ...chapter, bookId, id: chapterId(bookId, chapter.index) }
       store.put(record)
+      putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+        entityType: 'chapter', entityId: record.id, operation: 'upsert', payload: record,
+      }))
     }
     transaction.oncomplete = () => resolve()
     transaction.onerror = () => reject(transaction.error)
@@ -134,7 +182,7 @@ export async function getChapters(bookId: string): Promise<Chapter[]> {
 }
 
 export async function saveReadingProgress(progress: ReadingProgress): Promise<void> {
-  await withTransaction('readingProgress', 'readwrite', (store) => store.put(progress))
+  await putRecordWithOutbox('readingProgress', 'readingProgress', progress.bookId, progress, progress.updatedAt)
 }
 
 export async function getReadingProgress(bookId: string): Promise<ReadingProgress | undefined> {
@@ -146,7 +194,7 @@ export async function getAllReadingProgress(): Promise<ReadingProgress[]> {
 }
 
 export async function saveHighlight(highlight: Highlight): Promise<void> {
-  await withTransaction('highlights', 'readwrite', (store) => store.put(highlight))
+  await putRecordWithOutbox('highlights', 'highlight', highlight.id, highlight, highlight.updatedAt)
 }
 
 export async function getHighlights(bookId: string): Promise<Highlight[]> {
@@ -154,11 +202,11 @@ export async function getHighlights(bookId: string): Promise<Highlight[]> {
 }
 
 export async function deleteHighlight(id: string): Promise<void> {
-  await withTransaction('highlights', 'readwrite', (store) => store.delete(id))
+  await deleteRecordWithOutbox('highlights', 'highlight', id)
 }
 
 export async function saveAnnotation(annotation: Annotation): Promise<void> {
-  await withTransaction('annotations', 'readwrite', (store) => store.put(annotation))
+  await putRecordWithOutbox('annotations', 'annotation', annotation.id, annotation, annotation.updatedAt)
 }
 
 export async function getAnnotations(bookId: string): Promise<Annotation[]> {
@@ -166,11 +214,11 @@ export async function getAnnotations(bookId: string): Promise<Annotation[]> {
 }
 
 export async function deleteAnnotation(id: string): Promise<void> {
-  await withTransaction('annotations', 'readwrite', (store) => store.delete(id))
+  await deleteRecordWithOutbox('annotations', 'annotation', id)
 }
 
 export async function saveMarginalia(marginalia: Marginalia): Promise<void> {
-  await withTransaction('marginalia', 'readwrite', (store) => store.put(marginalia))
+  await putRecordWithOutbox('marginalia', 'marginalia', marginalia.id, marginalia, marginalia.updatedAt)
 }
 
 export async function getMarginalia(bookId: string): Promise<Marginalia[]> {
@@ -178,7 +226,7 @@ export async function getMarginalia(bookId: string): Promise<Marginalia[]> {
 }
 
 export async function deleteMarginalia(id: string): Promise<void> {
-  await withTransaction('marginalia', 'readwrite', (store) => store.delete(id))
+  await deleteRecordWithOutbox('marginalia', 'marginalia', id)
 }
 
 function deleteByBookIndex(store: IDBObjectStore, bookId: string) {
@@ -207,6 +255,7 @@ export async function deleteBookCompletely(bookId: string): Promise<void> {
     'highlights',
     'annotations',
     'marginalia',
+    'outbox',
   ]
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(storeNames, 'readwrite')
@@ -217,6 +266,9 @@ export async function deleteBookCompletely(bookId: string): Promise<void> {
     deleteByBookIndex(transaction.objectStore('highlights'), bookId)
     deleteByBookIndex(transaction.objectStore('annotations'), bookId)
     deleteByBookIndex(transaction.objectStore('marginalia'), bookId)
+    putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+      entityType: 'book', entityId: bookId, operation: 'delete',
+    }))
     transaction.oncomplete = () => resolve()
     transaction.onerror = () => reject(transaction.error)
     transaction.onabort = () => reject(transaction.error ?? new Error('删除书籍事务已中止'))

@@ -1,5 +1,6 @@
 import { BookOpenText, ChevronRight, Cloud, Feather, Fish, LibraryBig, SquarePen } from 'lucide-react'
 import { SidebarMenuButton } from '../bookshelf/components'
+import { CloudRoom } from '../cloud/CloudRoom'
 import type { CallingCard, CompanionPronoun } from '../settings/localSettings'
 
 export type SidebarSection = 'shelf' | 'calling-card' | 'thoughts' | 'visits' | 'shadow-books' | 'cloud'
@@ -101,6 +102,8 @@ export function DrawerPageContent({
     )
   }
 
+  if (section === 'cloud') return <CloudRoom />
+
   return (
     <section className="drawer-page" aria-live="polite">
       <section className="drawer-placeholder drawer-panel" aria-live="polite">
@@ -108,7 +111,6 @@ export function DrawerPageContent({
           {section === 'thoughts' && '以后可以在这里写下不依附于某一本书的文字。'}
           {section === 'visits' && `${companionLabel}进入书房、翻过书页或留下文字的踪迹，会安静地收在这里。`}
           {section === 'shadow-books' && '从微信读书带回的旧划线与想法，会先以影子书的方式留在这里。'}
-          {section === 'cloud' && '跨设备同步、书房备份与 Supabase 连接状态，将在这里统一照看。'}
         </p>
         <span>这只抽屉已经留好位置，尚未启用。</span>
       </section>

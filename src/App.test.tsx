@@ -354,6 +354,22 @@ describe('Marginalia visual prototype', () => {
     expect((await screen.findAllByRole('button', { name: /查看《.+》的书籍档案/ }))[0]).toHaveAccessibleName('查看《雨夜书房》的书籍档案')
   })
 
+  it('opens both reading exchange entrances from the book room menu', async () => {
+    await renderWithRainRoom(true)
+    fireEvent.click(screen.getByRole('button', { name: '查看《雨夜书房》的书籍档案' }))
+
+    fireEvent.click(screen.getByRole('button', { name: '管理这本书' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '递一页给她' }))
+    expect(screen.getByRole('dialog', { name: '递一页给她' })).toBeInTheDocument()
+    expect(await screen.findByRole('group', { name: '选择要递出的批注' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '关闭共读交换' }))
+
+    fireEvent.click(screen.getByRole('button', { name: '管理这本书' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '收回她的页边文字' }))
+    expect(screen.getByRole('dialog', { name: '收回她的页边文字' })).toBeInTheDocument()
+    expect(screen.getByText(/选择.*按交换契约返回的 JSON/)).toBeInTheDocument()
+  })
+
   it('removes an imported book and its parsed chapters from the local room', async () => {
     const bytes = await buildRainRoomEpub()
     const file = new File([bytes.buffer as ArrayBuffer], '待移出的书.epub', { type: 'application/epub+zip' })
@@ -570,6 +586,14 @@ describe('Marginalia visual prototype', () => {
     const companionNote = await screen.findByText(/也许书并不知道，只是它替那一刻保留了一个位置/)
     expect(companionNote).toHaveClass('fish-note')
     expect(within(companionNote).getByText('小鱼')).toBeInTheDocument()
+
+    fireEvent.click(companionNote.closest('button') as HTMLButtonElement)
+    const sentence = await screen.findByText(/后来她说：“我只记得/)
+    fireEvent.click(sentence)
+    fireEvent.click(screen.getByRole('button', { name: '重温' }))
+    const detail = screen.getByRole('dialog', { name: '重温批注' })
+    expect(within(detail).getByText('小鱼')).toBeInTheDocument()
+    expect(within(detail).getByText(/也许书并不知道，只是它替那一刻保留了一个位置/)).toBeInTheDocument()
   })
 
   it('selects and extends a contiguous sentence range', async () => {

@@ -1,5 +1,5 @@
 const DB_NAME = 'marginalia'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 /**
  * 连接缓存。
@@ -55,7 +55,42 @@ function openFresh(): Promise<IDBDatabase> {
         const marginaliaStore = db.createObjectStore('marginalia', { keyPath: 'id' })
         marginaliaStore.createIndex('bookId', 'bookId', { unique: false })
       }
+      if (!db.objectStoreNames.contains('outbox')) {
+        const outboxStore = db.createObjectStore('outbox', { keyPath: 'operationId' })
+        outboxStore.createIndex('entityKey', 'entityKey', { unique: false })
+        outboxStore.createIndex('createdAt', 'createdAt', { unique: false })
+      }
+      if (!db.objectStoreNames.contains('syncState')) {
+        db.createObjectStore('syncState', { keyPath: 'remoteUserId' })
+      }
     }
+  })
+}
+
+/**
+ * 在多个 object store 上执行一个原子事务。
+ *
+ * outbox 必须和业务记录同进同退，因此同步阶段的写入不能再用只接收单 store 的
+ * withTransaction。回调只负责发起 IDB 请求；真正 resolve 要等 transaction complete。
+ */
+export async function withStoresTransaction(
+  storeNames: string[],
+  mode: IDBTransactionMode,
+  callback: (transaction: IDBTransaction) => void,
+): Promise<void> {
+  const db = await openMarginaliaDB()
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(storeNames, mode)
+    try {
+      callback(transaction)
+    } catch (error) {
+      transaction.abort()
+      reject(error)
+      return
+    }
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error ?? new Error('IndexedDB 事务失败'))
+    transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB 事务已中止'))
   })
 }
 

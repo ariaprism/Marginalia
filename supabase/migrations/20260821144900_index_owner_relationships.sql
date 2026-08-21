@@ -1,0 +1,9 @@
+create index book_sections_book_owner_idx on public.book_sections(book_id, owner_id);
+create index reading_positions_book_owner_idx on public.reading_positions(book_id, owner_id);
+create index bookmarks_book_owner_idx on public.bookmarks(book_id, owner_id);
+create index highlights_book_owner_idx on public.highlights(book_id, owner_id);
+create index annotations_book_owner_idx on public.annotations(book_id, owner_id);
+create index annotations_highlight_owner_idx on public.annotations(highlight_id, owner_id);
+create index marginalia_book_owner_idx on public.marginalia(book_id, owner_id);
+create index marginalia_annotation_owner_idx on public.marginalia(annotation_id, owner_id);
+create index marginalia_highlight_owner_idx on public.marginalia(highlight_id, owner_id);
