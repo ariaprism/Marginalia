@@ -162,7 +162,7 @@
 - 2026-08-21：真实共读往返发现并修复阅读页详情遗漏共读者文字，精简交换包的内部定位字段；`npm test`（101 项通过）、`npm run build`、`npm run lint` 通过。首次定向测试受既有 Vitest worker 启动超时影响未加载测试，随后全量复跑稳定通过
 - 2026-08-21：IndexedDB outbox／syncState 与 fake remote 同步地基完成；定向 9 项及全量 `npm test -- --maxWorkers=1`（110 项通过）、`npm run build`、`npm run lint`、`git diff --check` 通过。默认并发定向测试曾在 worker 启动前超时，单 worker 稳定通过
 - 2026-08-21：独立 Supabase 项目 `Marginalia`（新加坡）建立；9 张 public 表全部启用 RLS，安全顾问 0 警告，匿名无业务表权限，双账号事务验证只能读取本人书与变化流；私有 `library` bucket、三笔正式 migration、生成类型与可选前端客户端配置归档；`npm run build`、`npm run lint`、`npm test -- --maxWorkers=1`（110 项通过）
-- 2026-08-22：GitHub Actions 写入 `SUPABASE_URL` variable 与 `SUPABASE_PUBLISHABLE_KEY` secret；云端书房正式／本地环境分流及入口完成，定向 25 项测试、`npm run build`、`npm run lint` 通过；全量 112 项中 111 项通过，唯一既有书房进入阅读器用例受 20 秒超时影响，随后单独复跑 1.96 秒通过
+- 2026-08-22：GitHub Actions 写入 `SUPABASE_URL` variable 与 `SUPABASE_PUBLISHABLE_KEY` secret；云端书房正式／本地环境分流及入口完成，定向 25 项测试、`npm run build`、`npm run lint` 通过；本地全量 112 项中唯一既有书房进入阅读器用例受 20 秒超时影响，随后单独复跑 1.96 秒通过；首次 CI 发现同毫秒 outbox 测试依赖 IndexedDB 返回顺序，已改为按动作查找
 
 ## 近期决定
 

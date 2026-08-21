@@ -43,7 +43,7 @@ describe('IndexedDB sync stores', () => {
     await deleteAnnotation(note.id)
 
     expect(await getAnnotations('book-1')).toEqual([])
-    expect((await getOutboxOperations()).at(-1)).toEqual(
+    expect((await getOutboxOperations()).find((operation) => operation.operation === 'delete')).toEqual(
       expect.objectContaining({ entityKey: 'annotation:note-1', operation: 'delete' }),
     )
   })
