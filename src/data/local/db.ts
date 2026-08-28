@@ -1,5 +1,5 @@
 const DB_NAME = 'marginalia'
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 /**
  * 连接缓存。
@@ -43,6 +43,12 @@ function openFresh(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains('readingProgress')) {
         db.createObjectStore('readingProgress', { keyPath: 'bookId' })
       }
+      if (!db.objectStoreNames.contains('bookmarks')) {
+        db.createObjectStore('bookmarks', { keyPath: 'bookId' })
+      }
+      if (!db.objectStoreNames.contains('profiles')) {
+        db.createObjectStore('profiles', { keyPath: 'id' })
+      }
       if (!db.objectStoreNames.contains('highlights')) {
         const highlightStore = db.createObjectStore('highlights', { keyPath: 'id' })
         highlightStore.createIndex('bookId', 'bookId', { unique: false })
@@ -62,6 +68,35 @@ function openFresh(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('syncState')) {
         db.createObjectStore('syncState', { keyPath: 'remoteUserId' })
+      }
+
+      // v2 把折页嵌在 ReadingProgress 中。v3 将它搬到独立 store，方便与远端
+      // bookmarks 一一对应；迁移只改变本地形状，不在升级过程中制造重复 outbox。
+      if (event.oldVersion < 3 && event.oldVersion > 0) {
+        const transaction = (event.target as IDBOpenDBRequest).transaction
+        if (transaction) {
+          const progressStore = transaction.objectStore('readingProgress')
+          const bookmarkStore = transaction.objectStore('bookmarks')
+          const cursorRequest = progressStore.openCursor()
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result
+            if (!cursor) return
+            const progress = cursor.value as {
+              bookId: string
+              bookmark?: { locator: unknown; updatedAt: string }
+            }
+            if (progress.bookmark) {
+              bookmarkStore.put({
+                bookId: progress.bookId,
+                locator: progress.bookmark.locator,
+                updatedAt: progress.bookmark.updatedAt,
+              })
+              const { bookmark: _, ...withoutBookmark } = progress
+              cursor.update(withoutBookmark)
+            }
+            cursor.continue()
+          }
+        }
       }
     }
   })

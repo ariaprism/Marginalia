@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { Annotation } from '../../domain'
+import { createBook } from '../../domain/book'
 import { saveAnnotation, deleteAnnotation, getAnnotations } from './bookStore'
-import { withStoresTransaction } from './db'
-import { getOutboxOperations, getSyncState, saveSyncState } from './syncStore'
+import { withStoresTransaction, withTransaction } from './db'
+import {
+  getOutboxOperations,
+  getSyncState,
+  prepareInitialOutbox,
+  saveSyncState,
+} from './syncStore'
 
 const note: Annotation = {
   id: 'note-1',
@@ -66,5 +72,40 @@ describe('IndexedDB sync stores', () => {
     }
     await saveSyncState(state)
     expect(await getSyncState('reader-1')).toEqual(state)
+  })
+
+  it('queues records that existed before outbox and does not duplicate them', async () => {
+    const book = createBook({
+      id: 'old-book',
+      title: '旧书',
+      author: '小G',
+      source: 'marginalia',
+      status: 'reading',
+    }, '2026-08-01T10:00:00.000Z')
+    await withTransaction('books', 'readwrite', (store) => store.put(book))
+
+    await expect(prepareInitialOutbox('reader-1')).resolves.toBe(1)
+    await expect(prepareInitialOutbox('reader-1')).resolves.toBe(0)
+    expect(await getOutboxOperations()).toEqual([
+      expect.objectContaining({ entityKey: 'book:old-book', payload: book }),
+    ])
+  })
+
+  it('skips the initial scan after that cloud account completed its first sync', async () => {
+    await withTransaction('books', 'readwrite', (store) => store.put(createBook({
+      id: 'already-synced',
+      title: '已收好',
+      author: '',
+      source: 'marginalia',
+      status: 'wish',
+    })))
+    await saveSyncState({
+      remoteUserId: 'reader-1',
+      lastPulledChangeId: 3,
+      initialSyncCompletedAt: '2026-08-28T10:00:00.000Z',
+    })
+
+    await expect(prepareInitialOutbox('reader-1')).resolves.toBe(0)
+    expect(await getOutboxOperations()).toEqual([])
   })
 })

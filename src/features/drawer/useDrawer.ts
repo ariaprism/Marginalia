@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { ensureStoredProfile, saveStoredProfile } from '../../data/local/profileStore'
 import { readCallingCard, writeCallingCard, type CallingCard } from '../settings/localSettings'
 import type { DrawerPage, SidebarPhase, SidebarSection } from './Drawer'
 
@@ -40,12 +41,34 @@ export function useDrawer() {
     setCallingCard((current) => {
       const next = { ...current, ...patch }
       writeCallingCard(next)
+      void saveStoredProfile(next).catch(() => {
+        // localStorage 已经保留本次修改；IndexedDB 暂时不可用时不打断抽屉交互。
+      })
       return next
     })
   }, [])
 
   useEffect(() => () => {
     if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current)
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    void ensureStoredProfile(readCallingCard())
+      .then((stored) => {
+        if (!active) return
+        const next: CallingCard = {
+          userName: stored.userName,
+          companionName: stored.companionName,
+          companionPronoun: stored.companionPronoun,
+        }
+        writeCallingCard(next)
+        setCallingCard(next)
+      })
+      .catch(() => {
+        // 旧 localStorage 名帖仍可使用；下一次打开再尝试迁移。
+      })
+    return () => { active = false }
   }, [])
 
   useEffect(() => {

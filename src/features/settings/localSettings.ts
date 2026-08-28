@@ -1,11 +1,12 @@
+import {
+  DEFAULT_CALLING_CARD,
+  type CallingCard,
+  type CompanionPronoun,
+} from '../../domain/profile'
+
 export type Screen = 'shelf' | 'room' | 'reader'
 export type LastView = { screen: Screen; bookId?: string }
-export type CompanionPronoun = '她' | '他' | 'TA' | 'name'
-export type CallingCard = {
-  userName: string
-  companionName: string
-  companionPronoun: CompanionPronoun
-}
+export type { CallingCard, CompanionPronoun }
 export type ReaderTheme = 'day' | 'night'
 export type ReaderTypeface = 'serif' | 'sans'
 export type ReaderAppearance = {
@@ -20,11 +21,6 @@ const LAST_VIEW_KEY = 'marginalia:last-view'
 const BOOK_RECENCY_KEY = 'marginalia:book-recency'
 const CALLING_CARD_KEY = 'marginalia:calling-card'
 const READER_APPEARANCE_KEY = 'marginalia:reader-appearance'
-const DEFAULT_CALLING_CARD: CallingCard = {
-  userName: '小狐狸',
-  companionName: '小鱼',
-  companionPronoun: '她',
-}
 export const DEFAULT_READER_APPEARANCE: ReaderAppearance = {
   theme: 'day',
   fontSize: 19,

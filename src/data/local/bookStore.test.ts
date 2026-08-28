@@ -30,6 +30,7 @@ import {
   setBookStatus,
   touchBook,
 } from './bookStore'
+import { getOutboxOperations } from './syncStore'
 
 let testId = 0
 function makeBook() {
@@ -156,9 +157,25 @@ describe('bookStore', () => {
     expect(retrieved?.locator).toEqual(resumeLocator)
     expect(retrieved?.bookmark?.locator).toEqual(bookmarkLocator)
     expect(await getAllReadingProgress()).toContainEqual(progress)
+    expect(await getOutboxOperations()).toContainEqual(expect.objectContaining({
+      entityKey: `bookmark:${book.id}`,
+      operation: 'upsert',
+      occurredAt: '2026-07-28T10:05:00.000Z',
+    }))
+
+    const bookmarkOperations = (await getOutboxOperations())
+      .filter((operation) => operation.entityKey === `bookmark:${book.id}`)
+    await saveReadingProgress({ ...progress, updatedAt: '2026-07-28T10:06:00.000Z' })
+    expect((await getOutboxOperations())
+      .filter((operation) => operation.entityKey === `bookmark:${book.id}`)).toHaveLength(bookmarkOperations.length)
 
     await saveReadingProgress(removeReadingBookmark(progress, '2026-07-28T10:10:00.000Z'))
     expect((await getReadingProgress(book.id))?.bookmark).toBeUndefined()
+    expect(await getOutboxOperations()).toContainEqual(expect.objectContaining({
+      entityKey: `bookmark:${book.id}`,
+      operation: 'delete',
+      occurredAt: '2026-07-28T10:10:00.000Z',
+    }))
   })
 
   it('saves highlights, annotations and marginalia', async () => {

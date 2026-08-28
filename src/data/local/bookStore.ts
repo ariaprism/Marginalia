@@ -19,6 +19,8 @@ export type StoredChapter = Chapter & {
   id: string
 }
 
+type StoredBookmark = NonNullable<ReadingProgress['bookmark']> & { bookId: string }
+
 function chapterId(bookId: string, index: number): string {
   return `${bookId}:${index}`
 }
@@ -182,15 +184,78 @@ export async function getChapters(bookId: string): Promise<Chapter[]> {
 }
 
 export async function saveReadingProgress(progress: ReadingProgress): Promise<void> {
-  await putRecordWithOutbox('readingProgress', 'readingProgress', progress.bookId, progress, progress.updatedAt)
+  const { bookmark, ...resumeProgress } = progress
+  const db = await openMarginaliaDB()
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(['readingProgress', 'bookmarks', 'outbox'], 'readwrite')
+    transaction.objectStore('readingProgress').put(resumeProgress)
+    putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+      entityType: 'readingProgress',
+      entityId: progress.bookId,
+      operation: 'upsert',
+      payload: resumeProgress,
+      occurredAt: progress.updatedAt,
+    }))
+
+    const bookmarkStore = transaction.objectStore('bookmarks')
+    if (bookmark) {
+      const record: StoredBookmark = { bookId: progress.bookId, ...bookmark }
+      const request = bookmarkStore.get(progress.bookId)
+      request.onsuccess = () => {
+        const existing = request.result as StoredBookmark | undefined
+        // 正常翻页会反复保存 ReadingProgress，但没有移动的折页不应反复产生纸条。
+        if (existing?.updatedAt === bookmark.updatedAt) return
+        bookmarkStore.put(record)
+        putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+          entityType: 'bookmark',
+          entityId: progress.bookId,
+          operation: 'upsert',
+          payload: record,
+          occurredAt: bookmark.updatedAt,
+        }))
+      }
+    } else {
+      const request = bookmarkStore.get(progress.bookId)
+      request.onsuccess = () => {
+        if (!request.result) return
+        bookmarkStore.delete(progress.bookId)
+        putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
+          entityType: 'bookmark',
+          entityId: progress.bookId,
+          operation: 'delete',
+          occurredAt: progress.updatedAt,
+        }))
+      }
+    }
+    transaction.oncomplete = () => resolve()
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(transaction.error ?? new Error('保存阅读位置的事务已中止'))
+  })
 }
 
 export async function getReadingProgress(bookId: string): Promise<ReadingProgress | undefined> {
-  return withTransaction('readingProgress', 'readonly', (store) => store.get(bookId))
+  const [progress, bookmark] = await Promise.all([
+    withTransaction<ReadingProgress | undefined>('readingProgress', 'readonly', (store) => store.get(bookId)),
+    withTransaction<StoredBookmark | undefined>('bookmarks', 'readonly', (store) => store.get(bookId)),
+  ])
+  if (!progress) return undefined
+  return bookmark
+    ? { ...progress, bookmark: { locator: bookmark.locator, updatedAt: bookmark.updatedAt } }
+    : progress
 }
 
 export async function getAllReadingProgress(): Promise<ReadingProgress[]> {
-  return withTransaction('readingProgress', 'readonly', (store) => store.getAll())
+  const [progress, bookmarks] = await Promise.all([
+    withTransaction<ReadingProgress[]>('readingProgress', 'readonly', (store) => store.getAll()),
+    withTransaction<StoredBookmark[]>('bookmarks', 'readonly', (store) => store.getAll()),
+  ])
+  const byBook = new Map(bookmarks.map((bookmark) => [bookmark.bookId, bookmark]))
+  return progress.map((item) => {
+    const bookmark = byBook.get(item.bookId)
+    return bookmark
+      ? { ...item, bookmark: { locator: bookmark.locator, updatedAt: bookmark.updatedAt } }
+      : item
+  })
 }
 
 export async function saveHighlight(highlight: Highlight): Promise<void> {
@@ -252,6 +317,7 @@ export async function deleteBookCompletely(bookId: string): Promise<void> {
     'epubFiles',
     'chapters',
     'readingProgress',
+    'bookmarks',
     'highlights',
     'annotations',
     'marginalia',
@@ -262,6 +328,7 @@ export async function deleteBookCompletely(bookId: string): Promise<void> {
     transaction.objectStore('books').delete(bookId)
     transaction.objectStore('epubFiles').delete(bookId)
     transaction.objectStore('readingProgress').delete(bookId)
+    transaction.objectStore('bookmarks').delete(bookId)
     deleteByBookIndex(transaction.objectStore('chapters'), bookId)
     deleteByBookIndex(transaction.objectStore('highlights'), bookId)
     deleteByBookIndex(transaction.objectStore('annotations'), bookId)

@@ -6,6 +6,7 @@ export type SyncEntityType =
   | 'epubFile'
   | 'chapter'
   | 'readingProgress'
+  | 'bookmark'
   | 'highlight'
   | 'annotation'
   | 'marginalia'
