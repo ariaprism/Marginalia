@@ -511,7 +511,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      apply_profile_book_sync_operation: {
+        Args: {
+          p_entity_id: string
+          p_entity_type: string
+          p_occurred_at: string
+          p_operation: string
+          p_operation_id: string
+          p_payload: Json
+        }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
@@ -644,4 +654,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-

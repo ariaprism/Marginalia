@@ -12,10 +12,10 @@ describe('CloudRoom', () => {
     await waitFor(() => expect(screen.getByText('待寄墨迹')).toBeInTheDocument())
   })
 
-  it('shows sync and restore as visible but safely disabled entrances', () => {
+  it('keeps staged sync and restore disabled in the local-only workroom', () => {
     render(<CloudRoom />)
 
-    expect(screen.getByRole('button', { name: /立即收好/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /先收名帖与书目/ })).toBeDisabled()
     expect(screen.getByRole('button', { name: /从云端恢复/ })).toBeDisabled()
   })
 })

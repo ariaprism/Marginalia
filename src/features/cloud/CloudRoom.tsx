@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { Cloud, CloudOff, LogOut, RefreshCw, RotateCcw } from 'lucide-react'
 import { getOutboxOperations } from '../../data/local/syncStore'
 import { getSupabaseClient } from '../../data/remote/supabaseClient'
+import { syncProfileAndBooks } from '../../data/sync/profileBookSync'
 import { cloudConnectionEnabled } from './config'
 
 type CloudRoomState =
@@ -17,6 +18,9 @@ export function CloudRoom() {
   const client = enabled ? getSupabaseClient() : undefined
   const [email, setEmail] = useState('')
   const [sending, setSending] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncNotice, setSyncNotice] = useState<string>()
+  const [lastSyncedAt, setLastSyncedAt] = useState<string>()
   const [state, setState] = useState<CloudRoomState>({ kind: enabled ? 'loading' : 'local', pending: 0 })
 
   useEffect(() => {
@@ -70,6 +74,24 @@ export function CloudRoom() {
     await client.auth.signOut()
   }
 
+  const syncFirstSlice = async () => {
+    if (!client || state.kind !== 'signed-in') return
+    setSyncing(true)
+    setSyncNotice(undefined)
+    try {
+      const result = await syncProfileAndBooks(client, state.session.user.id)
+      const pending = (await getOutboxOperations()).length
+      const now = new Date()
+      setLastSyncedAt(now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
+      setState((current) => ({ ...current, pending }))
+      setSyncNotice(`名帖与书目已收好：寄出 ${result.pushed} 笔，取回 ${result.pulled} 笔。其余内容仍安全留在本机。`)
+    } catch {
+      setSyncNotice('这次没有寄到云端。本地内容没有丢失，稍后可以再试。')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const localOnly = state.kind === 'local'
   const signedIn = state.kind === 'signed-in'
   const statusText = localOnly
@@ -77,7 +99,7 @@ export function CloudRoom() {
     : state.kind === 'loading'
       ? '正在辨认云端门帖…'
       : signedIn
-        ? '云端门帖已认出，真实同步接线中'
+        ? '云端门帖已认出，名帖与书目可以先收好'
         : '尚未登录云端书房'
 
   return (
@@ -106,14 +128,15 @@ export function CloudRoom() {
 
         <div className="cloud-sync-summary">
           <div><small>待寄墨迹</small><strong>{state.pending}</strong></div>
-          <div><small>最近收好</small><strong>{signedIn ? '尚未首次同步' : '—'}</strong></div>
+          <div><small>最近收好</small><strong>{signedIn ? (lastSyncedAt ?? '尚未首次同步') : '—'}</strong></div>
         </div>
 
         <div className="cloud-actions">
-          <button type="button" disabled title="真实 push / pull 接通后启用"><RefreshCw /><span>立即收好<small>同步本地与云端变化</small></span></button>
+          <button type="button" disabled={!signedIn || syncing} onClick={() => { void syncFirstSlice() }} title="现阶段只同步名帖与书目"><RefreshCw /><span>{syncing ? '正在收好…' : '先收名帖与书目'}<small>EPUB 与痕迹仍留在本机</small></span></button>
           <button type="button" disabled title="完整恢复流程接通后启用"><RotateCcw /><span>从云端恢复<small>重建这台设备的书房</small></span></button>
         </div>
-        <p className="cloud-room-footnote">入口已经留好。同步按钮会在真实 push／pull 与文件传输通过验收后亮起。</p>
+        {syncNotice && <p className="cloud-room-notice" role="status">{syncNotice}</p>}
+        <p className="cloud-room-footnote">第一段真实同步已经接通。等 EPUB、痕迹和恢复保护通过验收后，这里才会变成完整的“立即收好”。</p>
       </section>
     </section>
   )
