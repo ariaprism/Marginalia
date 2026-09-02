@@ -4,7 +4,7 @@ import type { Chapter } from '../../domain/chapter'
 import type { Highlight } from '../../domain/highlight'
 import type { Marginalia } from '../../domain/marginalia'
 import type { ReadingProgress } from '../../domain/readingProgress'
-import { createSyncOperation, type SyncEntityType } from '../sync/operations'
+import { createSyncOperation, type SyncEntityType, type SyncOperation } from '../sync/operations'
 import { getAllByIndex, openMarginaliaDB, withStoresTransaction, withTransaction } from './db'
 import { putOutboxOperation } from './syncStore'
 
@@ -302,6 +302,64 @@ function deleteByBookIndex(store: IDBObjectStore, bookId: string) {
     cursor.delete()
     cursor.continue()
   }
+}
+
+function operationBelongsToBook(operation: SyncOperation, bookId: string): boolean {
+  if (operation.entityType === 'book' || operation.entityType === 'epubFile'
+    || operation.entityType === 'readingProgress' || operation.entityType === 'bookmark') {
+    return operation.entityId === bookId
+  }
+  const payload = operation.payload
+  return Boolean(payload && typeof payload === 'object' && 'bookId' in payload
+    && (payload as { bookId?: unknown }).bookId === bookId)
+}
+
+/**
+ * 清掉从未进入 books 表的旧示例残留。
+ *
+ * “确认书不存在”和清理使用同一个数据库、同一个事务，避免测试换库或未来并发导入时
+ * 前一次清理误删刚刚藏入的同名书。旧示例从未属于云端藏书，因此其待寄纸条也直接
+ * 丢弃，不制造一笔永远待寄的删除动作。
+ */
+export async function cleanupOrphanedBookData(bookId: string): Promise<boolean> {
+  const db = await openMarginaliaDB()
+  const storeNames = [
+    'books',
+    'epubFiles',
+    'chapters',
+    'readingProgress',
+    'bookmarks',
+    'highlights',
+    'annotations',
+    'marginalia',
+    'outbox',
+  ]
+  return new Promise<boolean>((resolve, reject) => {
+    const transaction = db.transaction(storeNames, 'readwrite')
+    let cleaned = false
+    const bookRequest = transaction.objectStore('books').get(bookId)
+    bookRequest.onsuccess = () => {
+      if (bookRequest.result) return
+      cleaned = true
+      transaction.objectStore('epubFiles').delete(bookId)
+      transaction.objectStore('readingProgress').delete(bookId)
+      transaction.objectStore('bookmarks').delete(bookId)
+      deleteByBookIndex(transaction.objectStore('chapters'), bookId)
+      deleteByBookIndex(transaction.objectStore('highlights'), bookId)
+      deleteByBookIndex(transaction.objectStore('annotations'), bookId)
+      deleteByBookIndex(transaction.objectStore('marginalia'), bookId)
+      const outboxRequest = transaction.objectStore('outbox').openCursor()
+      outboxRequest.onsuccess = () => {
+        const cursor = outboxRequest.result
+        if (!cursor) return
+        if (operationBelongsToBook(cursor.value as SyncOperation, bookId)) cursor.delete()
+        cursor.continue()
+      }
+    }
+    transaction.oncomplete = () => resolve(cleaned)
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(transaction.error ?? new Error('清理旧示例数据的事务已中止'))
+  })
 }
 
 /**

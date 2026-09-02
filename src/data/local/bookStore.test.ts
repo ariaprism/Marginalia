@@ -18,6 +18,7 @@ import {
   getHighlights,
   getMarginalia,
   getReadingProgress,
+  cleanupOrphanedBookData,
   deleteBookCompletely,
   saveAnnotation,
   saveBook,
@@ -31,6 +32,7 @@ import {
   touchBook,
 } from './bookStore'
 import { getOutboxOperations } from './syncStore'
+import type { SyncOperation } from '../sync/operations'
 
 let testId = 0
 function makeBook() {
@@ -42,6 +44,13 @@ function makeBook() {
     source: 'marginalia',
     status: 'reading',
   })
+}
+
+function operationBelongsToTestBook(operation: SyncOperation, bookId: string): boolean {
+  if (operation.entityId === bookId) return true
+  const payload = operation.payload
+  return Boolean(payload && typeof payload === 'object' && 'bookId' in payload
+    && (payload as { bookId?: unknown }).bookId === bookId)
 }
 
 describe('bookStore', () => {
@@ -256,5 +265,19 @@ describe('bookStore', () => {
     expect(await getHighlights(book.id)).toEqual([])
     expect(await getAnnotations(book.id)).toEqual([])
     expect(await getMarginalia(book.id)).toEqual([])
+  })
+
+  it('cleans orphaned sample data without deleting a real book or leaving sync paper', async () => {
+    const orphanId = 'old-sample'
+    await saveChapters(orphanId, [{ id: 'old-chapter', index: 0, title: '旧章', href: 'old.xhtml' }])
+
+    expect(await cleanupOrphanedBookData(orphanId)).toBe(true)
+    expect(await getChapters(orphanId)).toEqual([])
+    expect((await getOutboxOperations()).some((operation) => operationBelongsToTestBook(operation, orphanId))).toBe(false)
+
+    const realBook = makeBook()
+    await saveBook(realBook)
+    expect(await cleanupOrphanedBookData(realBook.id)).toBe(false)
+    expect(await getBook(realBook.id)).toEqual(realBook)
   })
 })

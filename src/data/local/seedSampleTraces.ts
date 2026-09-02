@@ -1,6 +1,6 @@
 import { locatorFromSentenceRange, segmentChapters, type SegmentedChapter } from '../../reader/sentenceAnchor'
 import { sampleChapters } from '../../reader/bookContent'
-import { deleteBookCompletely, getAnnotations, getBook, getHighlights } from './bookStore'
+import { cleanupOrphanedBookData, getAnnotations, getHighlights } from './bookStore'
 import { persistHighlight, persistNote, persistReply } from './traceStore'
 
 /**
@@ -25,8 +25,7 @@ export const SAMPLE_BOOK_ID = 'rain-room'
  * rain-room 测试书和任何真实入库记录都不会被误删。
  */
 export async function cleanupLegacySampleData(): Promise<void> {
-  if (await getBook(SAMPLE_BOOK_ID)) return
-  await deleteBookCompletely(SAMPLE_BOOK_ID)
+  await cleanupOrphanedBookData(SAMPLE_BOOK_ID)
 }
 
 /**
