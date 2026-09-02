@@ -9,7 +9,7 @@ describe('CloudRoom', () => {
     expect(screen.getByText('这处施工书房只留在当前浏览器')).toBeInTheDocument()
     expect(screen.getByText(/localhost 默认不碰真实藏书/)).toBeInTheDocument()
     expect(screen.queryByLabelText('云端门帖邮箱')).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByText('待寄墨迹')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('待收内容')).toBeInTheDocument())
   })
 
   it('keeps staged sync and restore disabled in the local-only workroom', () => {

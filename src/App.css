@@ -417,6 +417,7 @@ blockquote {
 .cloud-sync-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-top: 25px; background: rgba(83,59,42,.11); }
 .cloud-sync-summary > div { display: grid; gap: 7px; padding: 14px 15px; background: #f4ecdf; }
 .cloud-sync-summary strong { font-family: var(--font-display); font-size: 13px; font-weight: 400; }
+.cloud-pending-details { margin: 9px 2px 0; color: #998478; font-size: 7px; line-height: 1.65; letter-spacing: .055em; }
 .cloud-actions { display: grid; gap: 0; margin-top: 22px; }
 .cloud-actions button { display: flex; align-items: center; gap: 12px; padding: 13px 2px; border: 0; border-bottom: 1px solid rgba(83,59,42,.11); text-align: left; color: #66544a; background: transparent; }
 .cloud-actions button:disabled { opacity: .48; }

@@ -109,6 +109,9 @@ export class IndexedDbSyncLocal implements SyncLocal {
           ...(previous?.initialSyncCompletedAt
             ? { initialSyncCompletedAt: previous.initialSyncCompletedAt }
             : {}),
+          ...(previous?.profileBookInitialSyncCompletedAt
+            ? { profileBookInitialSyncCompletedAt: previous.profileBookInitialSyncCompletedAt }
+            : {}),
         } satisfies SyncState)
       }
       transaction.oncomplete = () => resolve()

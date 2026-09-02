@@ -1,7 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { Cloud, CloudOff, LogOut, RefreshCw, RotateCcw } from 'lucide-react'
-import { getOutboxOperations } from '../../data/local/syncStore'
+import {
+  compactOutbox,
+  getPendingSyncSummary,
+  type PendingSyncSummary,
+} from '../../data/local/syncStore'
 import { getSupabaseClient } from '../../data/remote/supabaseClient'
 import { syncProfileAndBooks } from '../../data/sync/profileBookSync'
 import { cloudConnectionEnabled } from './config'
@@ -13,6 +17,16 @@ type CloudRoomState =
   | { kind: 'signed-in'; pending: number; session: Session }
   | { kind: 'error'; pending: number; message: string }
 
+const EMPTY_PENDING: PendingSyncSummary = {
+  operations: 0,
+  books: 0,
+  profile: 0,
+  files: 0,
+  chapters: 0,
+  reading: 0,
+  traces: 0,
+}
+
 export function CloudRoom() {
   const enabled = cloudConnectionEnabled()
   const client = enabled ? getSupabaseClient() : undefined
@@ -21,12 +35,15 @@ export function CloudRoom() {
   const [syncing, setSyncing] = useState(false)
   const [syncNotice, setSyncNotice] = useState<string>()
   const [lastSyncedAt, setLastSyncedAt] = useState<string>()
+  const [pendingSummary, setPendingSummary] = useState(EMPTY_PENDING)
   const [state, setState] = useState<CloudRoomState>({ kind: enabled ? 'loading' : 'local', pending: 0 })
 
   useEffect(() => {
     let active = true
-    void getOutboxOperations().then((operations) => {
-      if (active) setState((current) => ({ ...current, pending: operations.length }))
+    void compactOutbox().then(() => getPendingSyncSummary()).then((summary) => {
+      if (!active) return
+      setPendingSummary(summary)
+      setState((current) => ({ ...current, pending: summary.operations }))
     })
     if (!enabled) return () => { active = false }
     if (!client) {
@@ -80,10 +97,12 @@ export function CloudRoom() {
     setSyncNotice(undefined)
     try {
       const result = await syncProfileAndBooks(client, state.session.user.id)
-      const pending = (await getOutboxOperations()).length
+      await compactOutbox()
+      const pending = await getPendingSyncSummary()
       const now = new Date()
       setLastSyncedAt(now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
-      setState((current) => ({ ...current, pending }))
+      setPendingSummary(pending)
+      setState((current) => ({ ...current, pending: pending.operations }))
       setSyncNotice(`名帖与书目已收好：寄出 ${result.pushed} 笔，取回 ${result.pulled} 笔。其余内容仍安全留在本机。`)
     } catch {
       setSyncNotice('这次没有寄到云端。本地内容没有丢失，稍后可以再试。')
@@ -101,6 +120,20 @@ export function CloudRoom() {
       : signedIn
         ? '云端门帖已认出，名帖与书目可以先收好'
         : '尚未登录云端书房'
+  const pendingHeadline = pendingSummary.operations === 0
+    ? '已收好'
+    : pendingSummary.books > 0
+      ? `${pendingSummary.books} 本书`
+      : pendingSummary.profile > 0
+        ? '1 张名帖'
+        : `${pendingSummary.operations} 项`
+  const pendingDetails = [
+    pendingSummary.profile ? '名帖' : '',
+    pendingSummary.files ? `原书 ${pendingSummary.files} 份` : '',
+    pendingSummary.chapters ? `正文 ${pendingSummary.chapters} 章` : '',
+    pendingSummary.reading ? `阅读状态 ${pendingSummary.reading} 份` : '',
+    pendingSummary.traces ? `痕迹记录 ${pendingSummary.traces} 笔` : '',
+  ].filter(Boolean).join(' · ')
 
   return (
     <section className="drawer-page" aria-live="polite">
@@ -127,9 +160,10 @@ export function CloudRoom() {
         {signedIn && <div className="cloud-identity"><div><small>当前门帖</small><strong>{state.session.user.email ?? '已登录的私人账号'}</strong></div><button type="button" onClick={() => { void signOut() }}><LogOut />退出</button></div>}
 
         <div className="cloud-sync-summary">
-          <div><small>待寄墨迹</small><strong>{state.pending}</strong></div>
+          <div><small>待收内容</small><strong>{pendingHeadline}</strong></div>
           <div><small>最近收好</small><strong>{signedIn ? (lastSyncedAt ?? '尚未首次同步') : '—'}</strong></div>
         </div>
+        {pendingDetails && <p className="cloud-pending-details">{pendingDetails}</p>}
 
         <div className="cloud-actions">
           <button type="button" disabled={!signedIn || syncing} onClick={() => { void syncFirstSlice() }} title="现阶段只同步名帖与书目"><RefreshCw /><span>{syncing ? '正在收好…' : '先收名帖与书目'}<small>EPUB 与痕迹仍留在本机</small></span></button>

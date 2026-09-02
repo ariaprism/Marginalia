@@ -19,7 +19,7 @@ React feature
 - `src/domain/`：Book、Locator、ReadingProgress、Highlight、Annotation、Marginalia；不依赖 React、DOM 或 Supabase。
 - `src/reader/`：EPUB 解析、章节纯文本提取、句子切分、Locator 解析和动态分页输入。
 - `src/data/local/`：IndexedDB 建库、事务、书籍与痕迹读写。
-- `src/data/sync/`：同步操作、待寄合并规则、单次 push／pull 状态机、IndexedDB 写回和确定性 fake remote。
+- `src/data/sync/`：同步操作、同实体待寄替换、单次 push／pull 状态机、首次先拉后合并保护、IndexedDB 写回和确定性 fake remote。
 - `src/data/remote/`：可选 Supabase 浏览器客户端、远端生成类型及名帖／书目适配器；不作为阅读界面的直接数据源。
 - `src/features/cloud/`：正式站邮箱门帖、身份与待寄数量展示；阶段按钮只同步名帖与书目，完整同步和恢复仍保持禁用。
 - `src/features/bookshelf/`：书架视图模型、封面、页头和书架数据加载。

@@ -39,6 +39,7 @@ export type SyncState = {
   remoteUserId: string
   lastPulledChangeId: number
   lastSuccessfulSyncAt?: string
+  profileBookInitialSyncCompletedAt?: string
   initialSyncCompletedAt?: string
 }
 

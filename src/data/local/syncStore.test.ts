@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Annotation } from '../../domain'
 import { createBook } from '../../domain/book'
+import { createSyncOperation } from '../sync/operations'
 import { saveAnnotation, deleteAnnotation, getAnnotations } from './bookStore'
 import { withStoresTransaction, withTransaction } from './db'
 import {
   getOutboxOperations,
+  compactOutbox,
+  getPendingSyncSummary,
   getSyncState,
   prepareInitialOutbox,
   saveSyncState,
@@ -52,6 +55,54 @@ describe('IndexedDB sync stores', () => {
     expect((await getOutboxOperations()).find((operation) => operation.operation === 'delete')).toEqual(
       expect.objectContaining({ entityKey: 'annotation:note-1', operation: 'delete' }),
     )
+  })
+
+  it('keeps only the latest pending action for the same object', async () => {
+    await saveAnnotation(note)
+    await saveAnnotation({
+      ...note,
+      text: '改过的字',
+      updatedAt: '2026-08-21T10:05:00.000Z',
+    })
+
+    expect(await getOutboxOperations()).toEqual([
+      expect.objectContaining({
+        entityKey: 'annotation:note-1',
+        payload: expect.objectContaining({ text: '改过的字' }),
+      }),
+    ])
+  })
+
+  it('compacts old duplicate rows and reports a human-sized summary', async () => {
+    const oldProgress = createSyncOperation({
+      operationId: 'old-progress', entityType: 'readingProgress', entityId: 'book-1',
+      operation: 'upsert', occurredAt: '2026-08-21T10:00:00.000Z', payload: { bookId: 'book-1' },
+    })
+    const newProgress = createSyncOperation({
+      operationId: 'new-progress', entityType: 'readingProgress', entityId: 'book-1',
+      operation: 'upsert', occurredAt: '2026-08-21T10:05:00.000Z', payload: { bookId: 'book-1' },
+    })
+    const chapter = createSyncOperation({
+      operationId: 'chapter-1', entityType: 'chapter', entityId: 'book-1:0',
+      operation: 'upsert', payload: { bookId: 'book-1' },
+    })
+    await withStoresTransaction(['outbox'], 'readwrite', (transaction) => {
+      const store = transaction.objectStore('outbox')
+      store.put(oldProgress)
+      store.put(newProgress)
+      store.put(chapter)
+    })
+
+    await expect(compactOutbox()).resolves.toBe(1)
+    await expect(getPendingSyncSummary()).resolves.toEqual({
+      operations: 2,
+      books: 1,
+      profile: 0,
+      files: 0,
+      chapters: 1,
+      reading: 1,
+      traces: 0,
+    })
   })
 
   it('rolls the record back when its shared transaction aborts', async () => {

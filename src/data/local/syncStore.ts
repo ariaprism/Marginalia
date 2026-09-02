@@ -1,13 +1,75 @@
 import { openMarginaliaDB, withStoresTransaction, withTransaction } from './db'
-import { createSyncOperation, type SyncOperation, type SyncState } from '../sync/operations'
+import {
+  compactSyncOperations,
+  createSyncOperation,
+  type SyncEntityType,
+  type SyncOperation,
+  type SyncState,
+} from '../sync/operations'
 
 export function putOutboxOperation(store: IDBObjectStore, operation: SyncOperation): void {
-  store.put(operation)
+  const request = store.index('entityKey').getAllKeys(IDBKeyRange.only(operation.entityKey))
+  request.onsuccess = () => {
+    for (const operationId of request.result) store.delete(operationId)
+    store.put(operation)
+  }
 }
 
 export async function getOutboxOperations(): Promise<SyncOperation[]> {
   const operations = await withTransaction<SyncOperation[]>('outbox', 'readonly', (store) => store.getAll())
   return operations.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+}
+
+/** 清理升级前留下的同对象历史动作；保留最后一笔即可表达当前本地状态。 */
+export async function compactOutbox(): Promise<number> {
+  const operations = await getOutboxOperations()
+  const kept = new Set(compactSyncOperations(operations).map((operation) => operation.operationId))
+  const obsolete = operations.filter((operation) => !kept.has(operation.operationId))
+  await acknowledgeOutboxOperations(obsolete.map((operation) => operation.operationId))
+  return obsolete.length
+}
+
+export type PendingSyncSummary = {
+  operations: number
+  books: number
+  profile: number
+  files: number
+  chapters: number
+  reading: number
+  traces: number
+}
+
+function payloadBookId(operation: SyncOperation): string | undefined {
+  if (operation.entityType === 'book') return operation.entityId
+  if (operation.entityType === 'readingProgress' || operation.entityType === 'bookmark'
+    || operation.entityType === 'epubFile') return operation.entityId
+  const payload = operation.payload
+  if (payload && typeof payload === 'object' && 'bookId' in payload) {
+    const bookId = (payload as { bookId?: unknown }).bookId
+    return typeof bookId === 'string' ? bookId : undefined
+  }
+  return undefined
+}
+
+export async function getPendingSyncSummary(): Promise<PendingSyncSummary> {
+  const operations = compactSyncOperations(await getOutboxOperations())
+  const byType = new Map<SyncEntityType, number>()
+  const books = new Set<string>()
+  for (const operation of operations) {
+    byType.set(operation.entityType, (byType.get(operation.entityType) ?? 0) + 1)
+    const bookId = payloadBookId(operation)
+    if (bookId) books.add(bookId)
+  }
+  return {
+    operations: operations.length,
+    books: books.size,
+    profile: byType.get('profile') ?? 0,
+    files: byType.get('epubFile') ?? 0,
+    chapters: byType.get('chapter') ?? 0,
+    reading: (byType.get('readingProgress') ?? 0) + (byType.get('bookmark') ?? 0),
+    traces: (byType.get('highlight') ?? 0) + (byType.get('annotation') ?? 0)
+      + (byType.get('marginalia') ?? 0),
+  }
 }
 
 export async function acknowledgeOutboxOperations(operationIds: string[]): Promise<void> {
