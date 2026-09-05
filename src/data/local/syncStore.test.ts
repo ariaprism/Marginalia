@@ -159,4 +159,32 @@ describe('IndexedDB sync stores', () => {
     await expect(prepareInitialOutbox('reader-1')).resolves.toBe(0)
     expect(await getOutboxOperations()).toEqual([])
   })
+
+  it('does not put an already-synced channel back into the outbox', async () => {
+    const book = createBook({
+      id: 'book-1', title: '已经收过的书目', author: '', source: 'marginalia', status: 'wish',
+    })
+    await withStoresTransaction(['books', 'annotations'], 'readwrite', (transaction) => {
+      transaction.objectStore('books').put(book)
+      transaction.objectStore('annotations').put(note)
+    })
+    await saveSyncState({
+      remoteUserId: 'reader-1', lastPulledChangeId: 3,
+      profileBookInitialSyncCompletedAt: '2026-09-01T10:00:00.000Z',
+    })
+
+    await expect(prepareInitialOutbox('reader-1')).resolves.toBe(1)
+    expect(await getOutboxOperations()).toEqual([
+      expect.objectContaining({ entityKey: 'annotation:note-1' }),
+    ])
+
+    await withTransaction('outbox', 'readwrite', (store) => store.clear())
+    await saveSyncState({
+      remoteUserId: 'reader-1', lastPulledChangeId: 4,
+      profileBookInitialSyncCompletedAt: '2026-09-01T10:00:00.000Z',
+      structuredInitialSyncCompletedAt: '2026-09-05T10:00:00.000Z',
+    })
+    await expect(prepareInitialOutbox('reader-1')).resolves.toBe(0)
+    expect(await getOutboxOperations()).toEqual([])
+  })
 })

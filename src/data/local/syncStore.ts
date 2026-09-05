@@ -119,6 +119,14 @@ const bootstrapSources: BootstrapSource[] = [
   { storeName: 'marginalia', entityType: 'marginalia', entityId: (row) => String(row.id), occurredAt: (row) => row.updatedAt as string | undefined, operation: 'upsert', payload: (row) => row },
 ]
 
+function sourceNeedsInitialScan(source: BootstrapSource, state: SyncState | undefined): boolean {
+  if (state?.initialSyncCompletedAt) return false
+  if (state?.structuredInitialSyncCompletedAt && source.entityType !== 'epubFile') return false
+  if (state?.profileBookInitialSyncCompletedAt
+    && (source.entityType === 'profile' || source.entityType === 'book')) return false
+  return true
+}
+
 /**
  * 第一次连接云端前，把升级数据库之前已经存在的书房内容补进 outbox。
  *
@@ -148,6 +156,7 @@ export async function prepareInitialOutbox(remoteUserId: string): Promise<number
           (pendingRequest.result as SyncOperation[]).map((operation) => operation.entityKey),
         )
         for (const source of bootstrapSources) {
+          if (!sourceNeedsInitialScan(source, state)) continue
           const recordsRequest = transaction.objectStore(source.storeName).getAll()
           recordsRequest.onsuccess = () => {
             for (const value of recordsRequest.result as Record<string, unknown>[]) {

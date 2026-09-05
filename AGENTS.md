@@ -178,7 +178,7 @@
 - 2026-08-28：IndexedDB v3 将折页与自动阅读位置分库存放、名帖进入本地正式记录与 outbox，并增加旧书房首次待寄扫描；定向 19 项通过，`npm run build`、`npm run lint` 通过；全量 116 项中 115 项通过，唯一失败为既有书房进入阅读器用例 20 秒超时，随后单独复跑通过（1.94 秒）
 - 2026-09-01：真实名帖／书目元数据 RPC、Supabase remote adapter、IndexedDB 写回与阶段按钮接通；定向 8 项通过，`npm run build`、`npm run lint`、云端 migration 与权限核验通过。匿名角色无 RPC 执行权，authenticated 有执行权，安全顾问仅保留与当前无密码登录无关的泄露密码保护提示。
 - 2026-09-02：待寄箱改为同实体写入时替换旧动作，并在云端书房打开时整理历史重复项；新增按书、原书、正文、阅读状态与痕迹的人话摘要。名帖／书目首次同步改为先拉后合并，默认空白名帖让位于云端，真实本地编辑仍按时间决胜。进一步定位并修复旧示例清理跨两次数据库操作造成的测试换库竞态，同时清除其无意义待寄纸条；定向同步 15 项、相邻阅读器 2 项、本地书库 11 项、全量 `npm test -- --maxWorkers=1`（128 项）、`npm run build`、`npm run lint` 通过。
-- 2026-09-05：章节、阅读位置、折页、划线、批注与页边文字的真实双向适配和云端 RPC 接通；真实数据库事务回滚验证 `security invoker`、authenticated／anon 权限、RLS 与重复操作幂等，安全顾问无新增问题。定向 25 项、全量 `npm test -- --maxWorkers=1`（131 项）、`npm run build`、`npm run lint`、`git diff --check` 通过。
+- 2026-09-05：章节、阅读位置、折页、划线、批注与页边文字的真实双向适配和云端 RPC 接通；真实数据库事务回滚验证 `security invoker`、authenticated／anon 权限、RLS 与重复操作幂等，安全顾问无新增问题。补齐各同步阶段完成后不重复扫描已收内容的回归保护；定向 25 项、最终全量 `npm test -- --maxWorkers=1`（132 项）、`npm run build`、`npm run lint`、`git diff --check` 通过。
 
 ## 近期决定
 
