@@ -4,7 +4,7 @@ import { ensureStoredProfile, getStoredProfile, saveStoredProfile } from '../loc
 import { getSyncState } from '../local/syncStore'
 import type { PushResult, SyncRemote } from './engine'
 import type { RemoteChange, SyncOperation } from './operations'
-import { syncProfileAndBooksWithRemote } from './profileBookSync'
+import { syncProfileAndBooksWithRemote, syncStructuredCloudInkWithRemote } from './profileBookSync'
 
 const cloudProfile: RemoteChange = {
   changeId: 4,
@@ -58,5 +58,16 @@ describe('profile/book first merge protection', () => {
     expect(pushed).toHaveLength(1)
     expect(pushed[0][0]).toMatchObject({ entityType: 'profile', payload: { userName: '本机小狐狸' } })
     expect((await getStoredProfile())?.userName).toBe('本机小狐狸')
+  })
+})
+
+describe('structured first merge protection', () => {
+  it('pulls from the beginning once and records its own completion marker', async () => {
+    const { remote, pull } = remoteWithProfile()
+
+    await syncStructuredCloudInkWithRemote(remote, 'reader-1')
+
+    expect(pull).toHaveBeenCalledWith(0)
+    expect((await getSyncState('reader-1'))?.structuredInitialSyncCompletedAt).toBeTruthy()
   })
 })

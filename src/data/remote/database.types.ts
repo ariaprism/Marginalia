@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.15"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
@@ -511,6 +511,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      apply_cloud_ink_sync_operation: {
+        Args: {
+          p_entity_id: string
+          p_entity_type: string
+          p_occurred_at: string
+          p_operation: string
+          p_operation_id: string
+          p_payload: Json
+        }
+        Returns: boolean
+      }
       apply_profile_book_sync_operation: {
         Args: {
           p_entity_id: string

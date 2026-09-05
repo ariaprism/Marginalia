@@ -175,7 +175,8 @@ export async function persistNote(
     ? (await getAnnotations(locator.bookId)).find((annotation) => annotation.id === noteId)
     : undefined
 
-  await saveAnnotation(createAnnotation(
+  const created = existing?.createdAt ?? createdAt ?? nextTimestamp()
+  const annotation = createAnnotation(
     {
       id,
       bookId: locator.bookId,
@@ -183,9 +184,10 @@ export async function persistNote(
       locator,
       text,
     },
-    // 编辑保留原始创建时间：界面按创建时间排序，改字不该让批注跳位。
-    existing?.createdAt ?? createdAt ?? nextTimestamp(),
-  ))
+    created,
+  )
+  // 编辑保留创建时间用于排序，但必须拥有新的更新时间，云端才知道这版文字更新。
+  await saveAnnotation(existing ? { ...annotation, updatedAt: nextTimestamp() } : annotation)
   return id
 }
 

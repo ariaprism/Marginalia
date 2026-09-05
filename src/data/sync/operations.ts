@@ -40,6 +40,7 @@ export type SyncState = {
   lastPulledChangeId: number
   lastSuccessfulSyncAt?: string
   profileBookInitialSyncCompletedAt?: string
+  structuredInitialSyncCompletedAt?: string
   initialSyncCompletedAt?: string
 }
 

@@ -18,6 +18,29 @@ function isUntouchedDefaultProfile(profile: Awaited<ReturnType<typeof getStoredP
     && profile.companionPronoun === DEFAULT_CALLING_CARD.companionPronoun)
 }
 
+async function pullAllBeforeFirstPush(
+  local: IndexedDbSyncLocal,
+  remote: SyncRemote,
+): Promise<number> {
+  let pulled = 0
+  let cursor = 0
+  while (true) {
+    const cloud = await remote.pull(cursor)
+    pulled += cloud.changes.length
+    const cloudHasProfile = cloud.changes.some((change) => change.entityType === 'profile')
+    if (cloudHasProfile && isUntouchedDefaultProfile(await getStoredProfile())) {
+      const profileOperations = (await local.pending())
+        .filter((operation) => operation.entityType === 'profile')
+        .map((operation) => operation.operationId)
+      await local.acknowledge(profileOperations)
+    }
+    await local.apply(cloud.changes, cloud.cursor)
+    if (!cloud.changes.length || cloud.cursor <= cursor) break
+    cursor = cloud.cursor
+  }
+  return pulled
+}
+
 /**
  * 第一次认领云端账号时先取后寄。
  *
@@ -34,21 +57,7 @@ export async function syncProfileAndBooksWithRemote(
   let firstPulled = 0
 
   if (!state?.profileBookInitialSyncCompletedAt) {
-    let cursor = 0
-    while (true) {
-      const cloud = await remote.pull(cursor)
-      firstPulled += cloud.changes.length
-      const cloudHasProfile = cloud.changes.some((change) => change.entityType === 'profile')
-      if (cloudHasProfile && isUntouchedDefaultProfile(await getStoredProfile())) {
-        const profileOperations = (await local.pending())
-          .filter((operation) => operation.entityType === 'profile')
-          .map((operation) => operation.operationId)
-        await local.acknowledge(profileOperations)
-      }
-      await local.apply(cloud.changes, cloud.cursor)
-      if (!cloud.changes.length || cloud.cursor <= cursor) break
-      cursor = cloud.cursor
-    }
+    firstPulled = await pullAllBeforeFirstPush(local, remote)
   }
 
   const result = await runSync(local, remote)
@@ -59,17 +68,44 @@ export async function syncProfileAndBooksWithRemote(
     lastPulledChangeId: latest?.lastPulledChangeId ?? result.cursor,
     ...(latest?.lastSuccessfulSyncAt ? { lastSuccessfulSyncAt: latest.lastSuccessfulSyncAt } : {}),
     profileBookInitialSyncCompletedAt: latest?.profileBookInitialSyncCompletedAt ?? completedAt,
+    ...(latest?.structuredInitialSyncCompletedAt
+      ? { structuredInitialSyncCompletedAt: latest.structuredInitialSyncCompletedAt }
+      : {}),
     ...(latest?.initialSyncCompletedAt ? { initialSyncCompletedAt: latest.initialSyncCompletedAt } : {}),
   })
   return { ...result, pulled: result.pulled + firstPulled }
 }
 
-/** Staged manual sync. Only profile/book upserts are acknowledged; every other row stays pending. */
-export async function syncProfileAndBooks(
+/** First structured sync pulls the whole account before sending local chapters and traces. */
+export async function syncStructuredCloudInkWithRemote(
+  remote: SyncRemote,
+  remoteUserId: string,
+): Promise<SyncRunResult> {
+  await prepareInitialOutbox(remoteUserId)
+  const local = new IndexedDbSyncLocal(remoteUserId)
+  const state = await getSyncState(remoteUserId)
+  const firstPulled = state?.structuredInitialSyncCompletedAt
+    ? 0
+    : await pullAllBeforeFirstPush(local, remote)
+  const result = await runSync(local, remote)
+  const latest = await getSyncState(remoteUserId)
+  const completedAt = new Date().toISOString()
+  await saveSyncState({
+    remoteUserId,
+    lastPulledChangeId: latest?.lastPulledChangeId ?? result.cursor,
+    ...(latest?.lastSuccessfulSyncAt ? { lastSuccessfulSyncAt: latest.lastSuccessfulSyncAt } : {}),
+    profileBookInitialSyncCompletedAt: latest?.profileBookInitialSyncCompletedAt ?? completedAt,
+    structuredInitialSyncCompletedAt: latest?.structuredInitialSyncCompletedAt ?? completedAt,
+    ...(latest?.initialSyncCompletedAt ? { initialSyncCompletedAt: latest.initialSyncCompletedAt } : {}),
+  })
+  return { ...result, pulled: result.pulled + firstPulled }
+}
+
+export async function syncStructuredCloudInk(
   client: SupabaseClient<Database>,
   remoteUserId: string,
 ): Promise<SyncRunResult> {
-  return syncProfileAndBooksWithRemote(
+  return syncStructuredCloudInkWithRemote(
     new CloudInkRemote(createSupabaseCloudInkGateway(client)),
     remoteUserId,
   )

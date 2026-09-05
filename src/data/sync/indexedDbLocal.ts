@@ -1,4 +1,9 @@
 import type { Book } from '../../domain/book'
+import type { Annotation } from '../../domain/annotation'
+import type { Highlight } from '../../domain/highlight'
+import type { Marginalia } from '../../domain/marginalia'
+import type { ReadingProgress } from '../../domain/readingProgress'
+import type { StoredChapter } from '../local/bookStore'
 import type { StoredProfile } from '../local/profileStore'
 import { openMarginaliaDB } from '../local/db'
 import {
@@ -97,6 +102,36 @@ export class IndexedDbSyncLocal implements SyncLocal {
               }
             }
           }
+          if (change.entityType === 'chapter') {
+            const store = transaction.objectStore('chapters')
+            if (change.operation === 'delete') store.delete(change.entityId)
+            else if (change.payload) store.put(change.payload as StoredChapter)
+          }
+          if (change.entityType === 'readingProgress') {
+            const store = transaction.objectStore('readingProgress')
+            if (change.operation === 'delete') store.delete(change.entityId)
+            else if (change.payload) store.put(change.payload as ReadingProgress)
+          }
+          if (change.entityType === 'bookmark') {
+            const store = transaction.objectStore('bookmarks')
+            if (change.operation === 'delete') store.delete(change.entityId)
+            else if (change.payload) store.put(change.payload)
+          }
+          if (change.entityType === 'highlight') {
+            const store = transaction.objectStore('highlights')
+            if (change.operation === 'delete') store.delete(change.entityId)
+            else if (change.payload) store.put(change.payload as Highlight)
+          }
+          if (change.entityType === 'annotation') {
+            const store = transaction.objectStore('annotations')
+            if (change.operation === 'delete') store.delete(change.entityId)
+            else if (change.payload) store.put(change.payload as Annotation)
+          }
+          if (change.entityType === 'marginalia') {
+            const store = transaction.objectStore('marginalia')
+            if (change.operation === 'delete') store.delete(change.entityId)
+            else if (change.payload) store.put(change.payload as Marginalia)
+          }
         }
       }
 
@@ -111,6 +146,9 @@ export class IndexedDbSyncLocal implements SyncLocal {
             : {}),
           ...(previous?.profileBookInitialSyncCompletedAt
             ? { profileBookInitialSyncCompletedAt: previous.profileBookInitialSyncCompletedAt }
+            : {}),
+          ...(previous?.structuredInitialSyncCompletedAt
+            ? { structuredInitialSyncCompletedAt: previous.structuredInitialSyncCompletedAt }
             : {}),
         } satisfies SyncState)
       }

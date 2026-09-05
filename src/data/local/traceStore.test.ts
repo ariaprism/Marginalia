@@ -128,6 +128,7 @@ describe('traceStore', () => {
 
     expect(traces[0].foxNotes?.map((note) => note.text)).toEqual(['改过的第一条', '第二条'])
     expect(edited?.createdAt).toBe(originalCreatedAt)
+    expect(edited?.updatedAt).not.toBe(originalCreatedAt)
   })
 
   it('removes a single note without touching the rest of the trace', async () => {

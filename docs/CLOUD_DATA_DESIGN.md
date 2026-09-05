@@ -4,7 +4,7 @@
 >
 > 产品语义以 `SYNC_SEMANTICS.md` 为准。本文负责把它翻译成 Supabase 表、私有文件、浏览器本地待寄清单和增量同步边界。实现时仍需按当日官方文档复核具体 API 与 CLI 命令。
 >
-> 官方资料核对：2026-08-21。近期 breaking changes 涉及 Management API 日志、扩展版本固定与自托管网关，对本项目使用托管 Supabase、Auth、Postgres、Storage 与 Realtime 的设计没有直接影响。
+> 官方资料核对：2026-09-05。托管项目继续依赖 RLS 隔离本人数据；因新建表已不再默认暴露给 Data API，迁移同时显式授予所需表与 RPC 的 `authenticated` 权限，并保持 `anon` 无权访问业务数据。
 
 ## 1. 架构结论
 
