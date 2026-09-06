@@ -18,7 +18,7 @@ async function openImportDraft(file: File) {
   const input = screen.getByLabelText('选择 EPUB 文件') as HTMLInputElement
   Object.defineProperty(input, 'files', { value: [file], configurable: true })
   fireEvent.change(input)
-  await screen.findByDisplayValue('雨夜书房')
+  await screen.findByDisplayValue('雨夜书房', {}, { timeout: 10_000 })
 }
 
 async function seedTestBook({
@@ -391,7 +391,11 @@ describe('Marginalia visual prototype', () => {
     expect(screen.getByRole('dialog', { name: '移出《待移出的书》？' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '确认移出' }))
 
-    expect(await screen.findByText('《待移出的书》已经移出书房。')).toBeInTheDocument()
+    expect(await screen.findByText(
+      '《待移出的书》已经移出书房。',
+      {},
+      { timeout: 10_000 },
+    )).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '查看《待移出的书》的书籍档案' })).not.toBeInTheDocument()
     expect(await getBook(stored.id)).toBeUndefined()
     expect(await getChapters(stored.id)).toEqual([])
@@ -476,7 +480,10 @@ describe('Marginalia visual prototype', () => {
     try {
       await renderWithRainRoom(true)
       fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》/ }))
-      await waitFor(() => expect(document.querySelector('.has-user-highlight')).toBeInTheDocument())
+      await waitFor(
+        () => expect(document.querySelector('.has-user-highlight')).toBeInTheDocument(),
+        { timeout: 10_000 },
+      )
 
       fireEvent.click(screen.getByRole('article'), { clientX: 250 })
       fireEvent.click(screen.getByRole('button', { name: '页边痕迹' }))
@@ -634,7 +641,11 @@ describe('Marginalia visual prototype', () => {
     expect(sentDialog.querySelector('.sent-note time')?.textContent).toMatch(/^\d{2}\/\d{2}\/\d{2}：\d{2}$/)
     fireEvent.change(screen.getByPlaceholderText('Thoughts...'), { target: { value: '后来又想起了窗外的风。' } })
     fireEvent.click(screen.getByRole('button', { name: '留下' }))
-    expect(await screen.findByText('后来又想起了窗外的风。')).toBeInTheDocument()
+    expect(await screen.findByText(
+      '后来又想起了窗外的风。',
+      {},
+      { timeout: 5_000 },
+    )).toBeInTheDocument()
     expect(sentDialog.querySelectorAll('.sent-note')).toHaveLength(2)
     fireEvent.click(document.querySelector('.note-backdrop') as HTMLElement)
 

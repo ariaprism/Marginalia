@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { ChapterText } from './bookContent'
-import { locatorFromSentenceRange, resolveLocator, segmentChapter, segmentChapters } from './sentenceAnchor'
+import {
+  locatorFromSentenceRange,
+  resolveLocator,
+  segmentChapter,
+  segmentChapters,
+  sentenceTextAtLocator,
+} from './sentenceAnchor'
 
 function chapterOf(paragraphs: string[]): ChapterText {
   return { chapter: '第一章', title: '测试', kicker: '', paragraphs }
@@ -156,5 +162,24 @@ describe('resolveLocator', () => {
     const locator = locatorFromSentenceRange('book-1', 5, before.chapter, before.paragraphs[0], 2, 2)!
 
     expect(resolveLocator(locator.position, before.chapters, before.paragraphs)).toBeNull()
+  })
+})
+
+describe('sentenceTextAtLocator', () => {
+  it('shows the complete anchored sentence instead of the fixed-length locator excerpt', () => {
+    const paragraph = '她是个特立独行又离群索居的女人。与幽灵为伴，同游。'
+    const source = setup([paragraph])
+    const position = {
+      chapterIndex: 0,
+      elementPath: [0],
+      textOffset: 0,
+      selectedText: paragraph.slice(0, 24),
+      beforeContext: '',
+      afterContext: paragraph.slice(24),
+    }
+
+    expect(position.selectedText).toContain('与幽灵')
+    expect(sentenceTextAtLocator(position, source.chapters, source.paragraphs))
+      .toBe('她是个特立独行又离群索居的女人。')
   })
 })

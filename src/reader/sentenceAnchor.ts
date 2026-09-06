@@ -125,6 +125,22 @@ export function resolveLocator(
   return range ? { chapterIndex, ...range } : null
 }
 
+/**
+ * 给“最近停留”这类摘要找回锚点所在的完整一句。
+ *
+ * 阅读位置的 selectedText 是从当前动态页首字符起保存的一小段定位原文，可能跨过
+ * 句号继续带到下一句；它适合重锚定，却不适合直接当成人看的摘录。
+ */
+export function sentenceTextAtLocator(
+  position: TextPosition,
+  chapters: SegmentedChapter[],
+  chapterParagraphs: readonly (readonly string[])[],
+): string | null {
+  const resolved = resolveLocator(position, chapters, chapterParagraphs)
+  if (!resolved) return null
+  return chapters[resolved.chapterIndex]?.sentences[resolved.start]?.text.trim() || null
+}
+
 type ParagraphHit = { paragraphIndex: number; start: number }
 
 function locateAnchor(paragraphs: readonly string[], position: TextPosition): ParagraphHit | null {

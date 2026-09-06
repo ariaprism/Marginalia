@@ -82,6 +82,7 @@ import {
   locatorFromSentenceRange,
   resolveLocator,
   segmentChapters,
+  sentenceTextAtLocator,
 } from './reader/sentenceAnchor'
 import type { NoteEntry, Trace } from './reader/trace'
 import { pageAtTextOffset, textOffsetAtPage } from './reader/pageTextAnchor'
@@ -1310,7 +1311,13 @@ function App() {
     const resumeChapter = resumeChapterIndex === undefined
       ? undefined
       : readerChapters[resumeChapterIndex]?.chapter ?? `第 ${resumeChapterIndex + 1} 章`
-    const resumeQuote = currentProgress?.locator.position.selectedText
+    const resumeQuote = currentProgress
+      ? sentenceTextAtLocator(
+          currentProgress.locator.position,
+          segmentedChapters,
+          readerChapters.map((chapter) => chapter.paragraphs),
+        ) ?? currentProgress.locator.position.selectedText
+      : undefined
     return (
       <main className="room-shell">
         <BrandHeader
