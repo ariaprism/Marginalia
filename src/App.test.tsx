@@ -8,9 +8,12 @@ import {
   getReadingProgress,
   saveBook,
   saveChapters,
+  saveReadingProgress,
 } from './data/local/bookStore'
 import { seedSampleTraces } from './data/local/seedSampleTraces'
 import { createBook, type BookStatus } from './domain/book'
+import { createLocator, extractContext } from './domain/locator'
+import { createReadingProgress } from './domain/readingProgress'
 import { buildRainRoomEpub, rainRoomChapters } from './reader/fixtures/rain-room-epub'
 
 async function openImportDraft(file: File) {
@@ -352,6 +355,33 @@ describe('Marginalia visual prototype', () => {
     unmount()
     render(<App />)
     expect((await screen.findAllByRole('button', { name: /查看《.+》的书籍档案/ }))[0]).toHaveAccessibleName('查看《雨夜书房》的书籍档案')
+  })
+
+  it('shows the same complete resume sentence on the shelf as in the book room', async () => {
+    const bookId = await seedTestBook({ id: 'resume-sentence', title: '完整一句' })
+    const paragraph = '前言。人们爱上阿尔及尔的原因，就是人们在那里生活的日常。下一句不应出现。'
+    await saveChapters(bookId, [{
+      id: `${bookId}-chapter-0`,
+      index: 0,
+      title: '日常',
+      href: 'chapter-0.xhtml',
+      html: `<html><body><p>${paragraph}</p></body></html>`,
+    }])
+    const textOffset = paragraph.indexOf('尔及尔')
+    const context = extractContext(paragraph, textOffset, textOffset + 24)
+    await saveReadingProgress(createReadingProgress(bookId, createLocator(bookId, {
+      chapterIndex: 0,
+      elementPath: [0],
+      textOffset,
+      ...context,
+    })))
+
+    render(<App />)
+    const recent = await screen.findByRole('button', { name: '查看《完整一句》上次读到的位置' })
+    await waitFor(() => expect(recent.querySelector('q')).toHaveTextContent(
+      '人们爱上阿尔及尔的原因，就是人们在那里生活的日常。',
+    ))
+    expect(recent.querySelector('q')).not.toHaveTextContent('下一句不应出现')
   })
 
   it('opens both reading exchange entrances from the book room menu', async () => {

@@ -193,6 +193,7 @@ function App() {
   const [readerPositionReady, setReaderPositionReady] = useState(false)
   const [activeProgress, setActiveProgress] = useState<ReadingProgress | null>(null)
   const [progressByBook, setProgressByBook] = useState<Record<string, ReadingProgress>>({})
+  const [chaptersByBook, setChaptersByBook] = useState<Record<string, ChapterText[]>>({})
   const [bookmarkPage, setBookmarkPage] = useState<number | null>(null)
   const [bookmarkMenuOpen, setBookmarkMenuOpen] = useState(false)
   const [bookmarkReminderVisible, setBookmarkReminderVisible] = useState(false)
@@ -259,9 +260,13 @@ function App() {
     let cancelled = false
     cleanupLegacySampleData().catch((error) => console.error('清理旧示例痕迹失败', error))
     getAllReadingProgress()
-      .then((records) => {
+      .then(async (records) => {
         if (cancelled) return
         setProgressByBook(Object.fromEntries(records.map((record) => [record.bookId, record])))
+        const loaded = await Promise.all(records.map(async (record) => (
+          [record.bookId, await loadBookChapters(record.bookId)] as const
+        )))
+        if (!cancelled) setChaptersByBook(Object.fromEntries(loaded))
       })
       .catch((error) => console.error('读取阅读位置失败', error))
     return () => { cancelled = true }
@@ -296,11 +301,19 @@ function App() {
     .map((book) => {
       const progress = progressByBook[book.id]
       if (!progress) return book
+      const chapters = chaptersByBook[book.id] ?? []
+      const quote = chapters.length > 0
+        ? sentenceTextAtLocator(
+            progress.locator.position,
+            segmentChapters(chapters),
+            chapters.map((chapter) => chapter.paragraphs),
+          ) ?? progress.locator.position.selectedText
+        : progress.locator.position.selectedText
       return {
         ...book,
         progress: progress.totalProgress,
         lastChapter: `第 ${progress.locator.position.chapterIndex + 1} 章`,
-        quote: progress.locator.position.selectedText,
+        quote,
       }
     })
     .sort((a, b) => {
@@ -316,7 +329,7 @@ function App() {
       if (!aOpened) return 1
       if (!bOpened) return -1
       return bOpened.localeCompare(aOpened)
-    }), [bookRecency, loadedBooks, progressByBook])
+    }), [bookRecency, chaptersByBook, loadedBooks, progressByBook])
 
   const openableBookIds = useMemo(
     () => new Set(loadedBooks.map((book) => book.id)),
