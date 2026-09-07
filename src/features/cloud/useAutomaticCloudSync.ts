@@ -7,18 +7,22 @@ import { cloudConnectionEnabled } from './config'
 
 const WRITE_DEBOUNCE_MS = 2500
 const REALTIME_DEBOUNCE_MS = 350
+const FOREGROUND_CATCH_UP_MS = WRITE_DEBOUNCE_MS + 1500
 
 export function useAutomaticCloudSync(onLocalContentChanged: () => void): void {
   const enabled = cloudConnectionEnabled()
   const client = enabled ? getSupabaseClient() : undefined
   const [session, setSession] = useState<Session | null>(null)
   const timerRef = useRef<number | undefined>(undefined)
+  const foregroundCatchUpRef = useRef<number | undefined>(undefined)
   const callbackRef = useRef(onLocalContentChanged)
   callbackRef.current = onLocalContentChanged
 
   const cancelScheduled = useCallback(() => {
     if (timerRef.current !== undefined) window.clearTimeout(timerRef.current)
     timerRef.current = undefined
+    if (foregroundCatchUpRef.current !== undefined) window.clearTimeout(foregroundCatchUpRef.current)
+    foregroundCatchUpRef.current = undefined
   }, [])
 
   const syncNow = useCallback(() => {
@@ -57,7 +61,17 @@ export function useAutomaticCloudSync(onLocalContentChanged: () => void): void {
 
     const requestAfterWrite = () => schedule(WRITE_DEBOUNCE_MS)
     const requestWhenOnline = () => schedule(0)
-    const requestOnVisibility = () => schedule(document.visibilityState === 'visible' ? 0 : 100)
+    const requestOnVisibility = () => {
+      if (document.visibilityState !== 'visible') {
+        syncNow()
+        return
+      }
+      // 另一台设备可能也刚从后台回来，仍在等待自己的写入防抖。
+      // 先立即补拉，再越过那扇窗口复查一次，避免只能靠刷新看见新批注。
+      syncNow()
+      if (foregroundCatchUpRef.current !== undefined) window.clearTimeout(foregroundCatchUpRef.current)
+      foregroundCatchUpRef.current = window.setTimeout(syncNow, FOREGROUND_CATCH_UP_MS)
+    }
     const requestBeforeLeaving = () => syncNow()
     window.addEventListener(OUTBOX_CHANGED_EVENT, requestAfterWrite)
     window.addEventListener('online', requestWhenOnline)

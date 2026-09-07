@@ -78,17 +78,17 @@ describe('automatic cloud sync triggers', () => {
     expect(mocks.runCloudSync).toHaveBeenCalledOnce()
   })
 
-  it('tries again immediately after reconnecting or returning to the foreground', async () => {
+  it('rechecks after the local-write window when returning to the foreground', async () => {
     render(<Harness />)
-    await act(async () => { await Promise.resolve(); vi.runOnlyPendingTimers(); await Promise.resolve() })
+    await act(async () => { await Promise.resolve(); await vi.runAllTimersAsync() })
+    vi.clearAllTimers()
     mocks.runCloudSync.mockClear()
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
 
-    act(() => {
-      window.dispatchEvent(new Event('online'))
-      document.dispatchEvent(new Event('visibilitychange'))
-    })
-    await act(async () => { vi.runOnlyPendingTimers(); await Promise.resolve() })
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    await act(async () => { await Promise.resolve() })
     expect(mocks.runCloudSync).toHaveBeenCalledOnce()
+    await act(async () => { vi.advanceTimersByTime(4000); await Promise.resolve() })
+    expect(mocks.runCloudSync).toHaveBeenCalledTimes(2)
   })
 })
