@@ -6,12 +6,14 @@ import {
   type SyncOperation,
   type SyncState,
 } from '../sync/operations'
+import { notifyOutboxChanged } from '../sync/syncSignals'
 
 export function putOutboxOperation(store: IDBObjectStore, operation: SyncOperation): void {
   const request = store.index('entityKey').getAllKeys(IDBKeyRange.only(operation.entityKey))
   request.onsuccess = () => {
     for (const operationId of request.result) store.delete(operationId)
     store.put(operation)
+    notifyOutboxChanged()
   }
 }
 

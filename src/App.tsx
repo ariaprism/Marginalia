@@ -77,6 +77,7 @@ import {
 import { loadBookChapters, type ChapterText } from './reader/bookContent'
 import { ReaderControls, type ReaderPanel } from './features/reader/ReaderControls'
 import { useReaderAppearance } from './features/reader/useReaderAppearance'
+import { useAutomaticCloudSync } from './features/cloud/useAutomaticCloudSync'
 import { ReadingExchangeDialog } from './features/reading-exchange/ReadingExchangeDialog'
 import {
   locatorFromSentenceRange,
@@ -366,6 +367,19 @@ function App() {
     // 否则会把上一本书的痕迹盖到新书上。
     if (currentBookIdRef.current === bookId) setTraces(loaded)
   }, [readerChapters, roomBook.id, segmentedChapters])
+
+  const refreshCloudContent = useCallback(async () => {
+    setBooksRevision((current) => current + 1)
+    const records = await getAllReadingProgress()
+    setProgressByBook(Object.fromEntries(records.map((record) => [record.bookId, record])))
+    const loaded = await Promise.all(records.map(async (record) => (
+      [record.bookId, await loadBookChapters(record.bookId)] as const
+    )))
+    setChaptersByBook(Object.fromEntries(loaded))
+    await refreshTraces()
+  }, [refreshTraces])
+
+  useAutomaticCloudSync(() => { void refreshCloudContent() })
 
   useEffect(() => {
     // 章节还在加载时 readerChapters 仍是上一本书的，这时候读出来的句子区间会锚到

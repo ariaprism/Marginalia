@@ -4,11 +4,12 @@ import { Cloud, CloudOff, LogOut, RefreshCw, RotateCcw } from 'lucide-react'
 import {
   compactOutbox,
   getPendingSyncSummary,
+  getSyncState,
   type PendingSyncSummary,
 } from '../../data/local/syncStore'
 import { getSupabaseClient } from '../../data/remote/supabaseClient'
-import { syncStructuredCloudInk } from '../../data/sync/profileBookSync'
-import { syncPrivateBookFiles } from '../../data/sync/bookFileSync'
+import { runCloudSync } from '../../data/sync/cloudSync'
+import { CLOUD_SYNC_FINISHED_EVENT } from '../../data/sync/syncSignals'
 import { cloudConnectionEnabled } from './config'
 
 type CloudRoomState =
@@ -38,6 +39,7 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
   const [lastSyncedAt, setLastSyncedAt] = useState<string>()
   const [pendingSummary, setPendingSummary] = useState(EMPTY_PENDING)
   const [state, setState] = useState<CloudRoomState>({ kind: enabled ? 'loading' : 'local', pending: 0 })
+  const signedInUserId = state.kind === 'signed-in' ? state.session.user.id : undefined
 
   useEffect(() => {
     let active = true
@@ -72,6 +74,31 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
     }
   }, [client, enabled])
 
+  useEffect(() => {
+    if (!signedInUserId) return
+    let active = true
+    const refreshCloudStatus = async () => {
+      await compactOutbox()
+      const [pending, syncState] = await Promise.all([
+        getPendingSyncSummary(),
+        getSyncState(signedInUserId),
+      ])
+      if (!active) return
+      setPendingSummary(pending)
+      setState((current) => ({ ...current, pending: pending.operations }))
+      if (syncState?.lastSuccessfulSyncAt) {
+        setLastSyncedAt(new Date(syncState.lastSuccessfulSyncAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
+      }
+    }
+    void refreshCloudStatus()
+    const refreshAfterAutomaticSync = () => { void refreshCloudStatus() }
+    window.addEventListener(CLOUD_SYNC_FINISHED_EVENT, refreshAfterAutomaticSync)
+    return () => {
+      active = false
+      window.removeEventListener(CLOUD_SYNC_FINISHED_EVENT, refreshAfterAutomaticSync)
+    }
+  }, [signedInUserId])
+
   const requestMagicLink = async (event: FormEvent) => {
     event.preventDefault()
     if (!client || !email.trim()) return
@@ -97,9 +124,8 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
     setSyncing(true)
     setSyncNotice(undefined)
     try {
-      const result = await syncStructuredCloudInk(client, state.session.user.id)
-      const files = await syncPrivateBookFiles(client, state.session.user.id)
-      await compactOutbox()
+      const result = await runCloudSync(client, state.session.user.id)
+      const files = result.files
       const pending = await getPendingSyncSummary()
       const now = new Date()
       setLastSyncedAt(now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
@@ -178,7 +204,7 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
           <button type="button" disabled title="完整恢复流程接通后启用"><RotateCcw /><span>从云端恢复<small>重建这台设备的书房</small></span></button>
         </div>
         {syncNotice && <p className="cloud-room-notice" role="status">{syncNotice}</p>}
-        <p className="cloud-room-footnote">书页、痕迹与私有原书已经接入同一次手动收好。等完整恢复保护通过验收后，这里才会变成最终的“立即收好”。</p>
+        <p className="cloud-room-footnote">书页、痕迹与私有原书会在写入后、重新联网和回到书房时自动收好；这个按钮继续作为手动兜底。完整恢复保护通过验收后，这里会换成最终的“立即收好”。</p>
       </section>
     </section>
   )

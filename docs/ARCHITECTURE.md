@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-项目处于 Phase 2。React 负责界面，EPUB 仍在浏览器内解析，书籍和阅读痕迹仍以 IndexedDB 作为读取与第一写入点。Supabase 项目、登录、远端表、RLS、私有 Storage 和本地 outbox 地基已经建立；名帖、书目、章节、阅读位置、折页与痕迹已经接通手动双向同步，EPUB 私有文件传输尚未接通。
+项目处于 Phase 2。React 负责界面，EPUB 仍在浏览器内解析，书籍和阅读痕迹仍以 IndexedDB 作为读取与第一写入点。Supabase 项目、登录、远端表、RLS、私有 Storage 和本地 outbox 已经建立；名帖、书目、章节、阅读位置、折页、痕迹、EPUB 与封面已完成手动往返，自动触发与 Realtime 提醒也已接通，完整恢复仍待验收。
 
 ```text
 React feature
@@ -10,8 +10,8 @@ React feature
   ├─ reader/          EPUB 解析、正文提取、定位与重锚定
   └─ data/
        ├─ local/      IndexedDB、outbox 与 syncState
-       ├─ sync/       不依赖 Supabase 的同步状态机和 fake remote
-       └─ remote/     可选 Supabase 客户端与生成类型；真实适配器待接
+       ├─ sync/       同步状态机、单飞调度、文件往返和 fake remote
+       └─ remote/     可选 Supabase 客户端、生成类型与真实适配器
 ```
 
 ## 目录职责
@@ -19,9 +19,9 @@ React feature
 - `src/domain/`：Book、Locator、ReadingProgress、Highlight、Annotation、Marginalia；不依赖 React、DOM 或 Supabase。
 - `src/reader/`：EPUB 解析、章节纯文本提取、句子切分、Locator 解析和动态分页输入。
 - `src/data/local/`：IndexedDB 建库、事务、书籍与痕迹读写。
-- `src/data/sync/`：同步操作、同实体待寄替换、单次 push／pull 状态机、首次先拉后合并保护、IndexedDB 写回和确定性 fake remote。
+- `src/data/sync/`：同步操作、同实体待寄替换、单次 push／pull 状态机、首次先拉后合并保护、私有文件往返、串行单飞入口、IndexedDB 写回和确定性 fake remote。
 - `src/data/remote/`：可选 Supabase 浏览器客户端、远端生成类型及结构化书房适配器；不作为阅读界面的直接数据源。
-- `src/features/cloud/`：正式站邮箱门帖、身份与待寄数量展示；阶段按钮同步结构化书房内容，完整文件同步和恢复仍保持禁用。
+- `src/features/cloud/`：正式站邮箱门帖、身份与待寄数量展示，以及应用启动、重连、前后台、本地写入和 Realtime 提醒的自动调度；手动同步作为兜底，完整恢复仍保持禁用。
 - `src/features/bookshelf/`：书架视图模型、封面、页头和书架数据加载。
 - `src/features/import-book/`：EPUB 预解析、导入草稿、封面选择、确认入库和弹窗状态。
 - `src/features/drawer/`：书房抽屉、功能页和名帖状态。
@@ -61,6 +61,5 @@ GitHub Pages 正式站注入 Supabase URL 与 publishable key，并允许邮箱�
 
 ## Phase 2 尚未接通
 
-- EPUB／封面的私有上传下载。
-- 应用启动、网络恢复、回到前台、写入防抖与 Realtime 提醒。
+- 自动同步的正式双浏览器与断网人工验收。
 - 受保护的完整“从云端恢复”。
