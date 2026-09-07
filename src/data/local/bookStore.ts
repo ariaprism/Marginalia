@@ -159,6 +159,35 @@ export async function getEpubFile(bookId: string): Promise<Blob | undefined> {
   return (record as StoredEpubFile | undefined)?.file
 }
 
+/** 云端取回的原书已经是已确认数据，写回本地时不能再次制造待寄项。 */
+export async function restoreEpubFileFromCloud(
+  bookId: string,
+  file: Blob,
+  addedAt = new Date().toISOString(),
+): Promise<void> {
+  await withTransaction('epubFiles', 'readwrite', (store) => store.put({ bookId, file, addedAt }))
+}
+
+/** 把私有 Storage 取回的封面补到现有书目，不改动书目时间，也不重新入队。 */
+export async function restoreBookCoverFromCloud(bookId: string, coverUrl: string): Promise<boolean> {
+  const db = await openMarginaliaDB()
+  return new Promise<boolean>((resolve, reject) => {
+    const transaction = db.transaction('books', 'readwrite')
+    const store = transaction.objectStore('books')
+    const request = store.get(bookId)
+    let restored = false
+    request.onsuccess = () => {
+      const book = request.result as Book | undefined
+      if (!book) return
+      store.put({ ...book, coverUrl })
+      restored = true
+    }
+    transaction.oncomplete = () => resolve(restored)
+    transaction.onerror = () => reject(transaction.error)
+    transaction.onabort = () => reject(transaction.error ?? new Error('云端封面写回本机时中止'))
+  })
+}
+
 export async function saveChapters(bookId: string, chapters: Chapter[]): Promise<void> {
   const db = await openMarginaliaDB()
   return new Promise((resolve, reject) => {

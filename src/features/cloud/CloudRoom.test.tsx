@@ -15,7 +15,7 @@ describe('CloudRoom', () => {
   it('keeps staged sync and restore disabled in the local-only workroom', () => {
     render(<CloudRoom />)
 
-    expect(screen.getByRole('button', { name: /收好书页与痕迹/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /收好书页与原书/ })).toBeDisabled()
     expect(screen.getByRole('button', { name: /从云端恢复/ })).toBeDisabled()
   })
 })

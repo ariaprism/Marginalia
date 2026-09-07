@@ -8,6 +8,7 @@ import {
 } from '../../data/local/syncStore'
 import { getSupabaseClient } from '../../data/remote/supabaseClient'
 import { syncStructuredCloudInk } from '../../data/sync/profileBookSync'
+import { syncPrivateBookFiles } from '../../data/sync/bookFileSync'
 import { cloudConnectionEnabled } from './config'
 
 type CloudRoomState =
@@ -27,7 +28,7 @@ const EMPTY_PENDING: PendingSyncSummary = {
   traces: 0,
 }
 
-export function CloudRoom() {
+export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: () => void } = {}) {
   const enabled = cloudConnectionEnabled()
   const client = enabled ? getSupabaseClient() : undefined
   const [email, setEmail] = useState('')
@@ -97,13 +98,20 @@ export function CloudRoom() {
     setSyncNotice(undefined)
     try {
       const result = await syncStructuredCloudInk(client, state.session.user.id)
+      const files = await syncPrivateBookFiles(client, state.session.user.id)
       await compactOutbox()
       const pending = await getPendingSyncSummary()
       const now = new Date()
       setLastSyncedAt(now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
       setPendingSummary(pending)
       setState((current) => ({ ...current, pending: pending.operations }))
-      setSyncNotice(`书页与痕迹已收好：寄出 ${result.pushed} 笔，取回 ${result.pulled} 笔。EPUB 原书仍安全留在本机。`)
+      onLocalContentChanged?.()
+      const fileNotes = [
+        files.uploadedBooks ? `私存原书 ${files.uploadedBooks} 本` : '',
+        files.downloadedEpubs ? `取回原书 ${files.downloadedEpubs} 本` : '',
+        files.downloadedCovers ? `取回封面 ${files.downloadedCovers} 张` : '',
+      ].filter(Boolean).join('，')
+      setSyncNotice(`书房已收好：寄出 ${result.pushed} 笔，取回 ${result.pulled} 笔${fileNotes ? `，${fileNotes}` : ''}。`)
     } catch {
       setSyncNotice('这次没有寄到云端。本地内容没有丢失，稍后可以再试。')
     } finally {
@@ -166,11 +174,11 @@ export function CloudRoom() {
         {pendingDetails && <p className="cloud-pending-details">{pendingDetails}</p>}
 
         <div className="cloud-actions">
-          <button type="button" disabled={!signedIn || syncing} onClick={() => { void syncStructuredContent() }} title="同步名帖、书目、正文、阅读状态与痕迹"><RefreshCw /><span>{syncing ? '正在收好…' : '收好书页与痕迹'}<small>EPUB 原书暂留在本机</small></span></button>
+          <button type="button" disabled={!signedIn || syncing} onClick={() => { void syncStructuredContent() }} title="同步名帖、书目、正文、阅读状态、痕迹与私有原书"><RefreshCw /><span>{syncing ? '正在收好…' : '收好书页与原书'}<small>EPUB 与封面一并私存</small></span></button>
           <button type="button" disabled title="完整恢复流程接通后启用"><RotateCcw /><span>从云端恢复<small>重建这台设备的书房</small></span></button>
         </div>
         {syncNotice && <p className="cloud-room-notice" role="status">{syncNotice}</p>}
-        <p className="cloud-room-footnote">书页与痕迹同步已经接通。等 EPUB 文件和恢复保护通过验收后，这里才会变成完整的“立即收好”。</p>
+        <p className="cloud-room-footnote">书页、痕迹与私有原书已经接入同一次手动收好。等完整恢复保护通过验收后，这里才会变成最终的“立即收好”。</p>
       </section>
     </section>
   )

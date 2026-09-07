@@ -1699,6 +1699,7 @@ function App() {
         companionLabel={companionLabel}
         companionSubject={companionSubject}
         onCallingCardChange={updateCallingCard}
+        onCloudContentChanged={() => setBooksRevision((current) => current + 1)}
       /> : <>
       <nav className="shelf-filters" aria-label="书架分类">
         {filters.map((item) => {

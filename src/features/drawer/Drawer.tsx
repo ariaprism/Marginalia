@@ -77,12 +77,14 @@ export function DrawerPageContent({
   companionLabel,
   companionSubject,
   onCallingCardChange,
+  onCloudContentChanged,
 }: {
   section: DrawerPage
   callingCard: CallingCard
   companionLabel: string
   companionSubject: string
   onCallingCardChange: (patch: Partial<CallingCard>) => void
+  onCloudContentChanged?: () => void
 }) {
   if (section === 'calling-card') {
     return (
@@ -102,7 +104,7 @@ export function DrawerPageContent({
     )
   }
 
-  if (section === 'cloud') return <CloudRoom />
+  if (section === 'cloud') return <CloudRoom onLocalContentChanged={onCloudContentChanged} />
 
   return (
     <section className="drawer-page" aria-live="polite">
