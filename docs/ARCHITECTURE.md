@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-项目处于 Phase 2。React 负责界面，EPUB 仍在浏览器内解析，书籍和阅读痕迹仍以 IndexedDB 作为读取与第一写入点。Supabase 项目、登录、远端表、RLS、私有 Storage 和本地 outbox 已经建立；名帖、书目、章节、阅读位置、折页、痕迹、EPUB 与封面已完成手动往返，自动触发与 Realtime 提醒也已接通，完整恢复仍待验收。
+项目处于 Phase 2。React 负责界面，EPUB 仍在浏览器内解析，书籍和阅读痕迹仍以 IndexedDB 作为读取与第一写入点。Supabase 项目、登录、远端表、RLS、私有 Storage 和本地 outbox 已经建立；名帖、书目、章节、阅读位置、折页、痕迹、EPUB 与封面已完成自动双向同步，受保护的完整恢复也已接通代码并等待正式站验收。
 
 ```text
 React feature
@@ -21,7 +21,7 @@ React feature
 - `src/data/local/`：IndexedDB 建库、事务、书籍与痕迹读写。
 - `src/data/sync/`：同步操作、同实体待寄替换、单次 push／pull 状态机、首次先拉后合并保护、私有文件往返、串行单飞入口、IndexedDB 写回和确定性 fake remote。
 - `src/data/remote/`：可选 Supabase 浏览器客户端、远端生成类型及结构化书房适配器；不作为阅读界面的直接数据源。
-- `src/features/cloud/`：正式站邮箱门帖、身份与待寄数量展示，以及应用启动、重连、前后台、本地写入和 Realtime 提醒的自动调度；手动同步作为兜底，完整恢复仍保持禁用。
+- `src/features/cloud/`：正式站邮箱门帖、身份与待寄数量展示，以及应用启动、重连、前后台、本地写入和 Realtime 提醒的自动调度；“立即收好”作为手动兜底，“从云端恢复”负责受保护的整库重建。
 - `src/features/bookshelf/`：书架视图模型、封面、页头和书架数据加载。
 - `src/features/import-book/`：EPUB 预解析、导入草稿、封面选择、确认入库和弹窗状态。
 - `src/features/drawer/`：书房抽屉、功能页和名帖状态。

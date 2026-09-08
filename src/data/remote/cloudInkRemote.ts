@@ -109,7 +109,7 @@ export function createSupabaseCloudInkGateway(client: SupabaseClient<Database>):
   }
 }
 
-function profilePayload(row: ProfileRow): StoredProfile {
+export function profilePayload(row: ProfileRow): StoredProfile {
   const pronoun = row.companion_subject as CompanionPronoun
   return {
     id: 'self', userName: row.user_name, companionName: row.companion_name,
@@ -118,7 +118,7 @@ function profilePayload(row: ProfileRow): StoredProfile {
   }
 }
 
-function bookPayload(row: BookRow): Book {
+export function bookPayload(row: BookRow): Book {
   return {
     id: row.id, title: row.title,
     ...(row.english_title ? { englishTitle: row.english_title } : {}),
@@ -134,14 +134,14 @@ function bookPayload(row: BookRow): Book {
   }
 }
 
-function chapterPayload(row: ChapterRow): StoredChapter {
+export function chapterPayload(row: ChapterRow): StoredChapter {
   return {
     id: row.id, bookId: row.book_id, index: row.spine_index,
     title: row.title, href: row.href, html: row.content_html,
   }
 }
 
-function readingPayload(row: ReadingPositionRow): ReadingProgress {
+export function readingPayload(row: ReadingPositionRow): ReadingProgress {
   return {
     bookId: row.book_id, locator: row.locator as unknown as Locator,
     chapterProgress: row.chapter_progress, totalProgress: row.total_progress,
@@ -149,18 +149,18 @@ function readingPayload(row: ReadingPositionRow): ReadingProgress {
   }
 }
 
-function bookmarkPayload(row: BookmarkRow) {
+export function bookmarkPayload(row: BookmarkRow) {
   return { bookId: row.book_id, locator: row.locator as unknown as Locator, updatedAt: row.moved_at }
 }
 
-function highlightPayload(row: HighlightRow): Highlight {
+export function highlightPayload(row: HighlightRow): Highlight {
   return {
     id: row.id, bookId: row.book_id, locator: row.locator as unknown as Locator,
     color: row.color as HighlightColor, createdAt: row.created_at, updatedAt: row.updated_at,
   }
 }
 
-function annotationPayload(row: AnnotationRow): Annotation {
+export function annotationPayload(row: AnnotationRow): Annotation {
   return {
     id: row.id, bookId: row.book_id,
     ...(row.highlight_id ? { highlightId: row.highlight_id } : {}),
@@ -169,7 +169,7 @@ function annotationPayload(row: AnnotationRow): Annotation {
   }
 }
 
-function marginaliaPayload(row: MarginaliaRow): Marginalia {
+export function marginaliaPayload(row: MarginaliaRow): Marginalia {
   return {
     id: row.id, bookId: row.book_id, annotationId: row.annotation_id ?? '',
     locator: row.locator as unknown as Locator, text: row.text, actor: 'companion',

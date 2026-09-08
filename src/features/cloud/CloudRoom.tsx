@@ -9,6 +9,7 @@ import {
 } from '../../data/local/syncStore'
 import { getSupabaseClient } from '../../data/remote/supabaseClient'
 import { runCloudSync } from '../../data/sync/cloudSync'
+import { restoreCloudLibrary } from '../../data/sync/cloudRestore'
 import { CLOUD_SYNC_FINISHED_EVENT } from '../../data/sync/syncSignals'
 import { cloudConnectionEnabled } from './config'
 
@@ -35,6 +36,7 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
   const [email, setEmail] = useState('')
   const [sending, setSending] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [restoring, setRestoring] = useState(false)
   const [syncNotice, setSyncNotice] = useState<string>()
   const [lastSyncedAt, setLastSyncedAt] = useState<string>()
   const [pendingSummary, setPendingSummary] = useState(EMPTY_PENDING)
@@ -145,6 +147,34 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
     }
   }
 
+  const restoreFromCloud = async () => {
+    if (!client || state.kind !== 'signed-in') return
+    const confirmed = window.confirm(
+      '要用云端书房重建这台设备吗？\n\n小G会先寄出本机尚未收好的内容，再完整检查云端书目、正文、痕迹和 EPUB。全部取齐后才会替换本机书房；阅读排版等本机偏好会保留。',
+    )
+    if (!confirmed) return
+    setRestoring(true)
+    setSyncNotice('正在检查并取回云端书房，本机内容暂时不会改变…')
+    try {
+      if ((await getPendingSyncSummary()).operations > 0) await runCloudSync(client, state.session.user.id)
+      if ((await getPendingSyncSummary()).operations > 0) {
+        throw new Error('仍有本机内容没有寄出')
+      }
+      const result = await restoreCloudLibrary(client, state.session.user.id)
+      const pending = await getPendingSyncSummary()
+      setPendingSummary(pending)
+      setState((current) => ({ ...current, pending: pending.operations }))
+      setLastSyncedAt(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
+      onLocalContentChanged?.()
+      setSyncNotice(`云端书房已完整恢复：${result.books} 本书、${result.chapters} 章正文、${result.traces} 笔痕迹和 ${result.files} 份 EPUB 都已回到这台设备。`)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : '云端暂时没有回应'
+      setSyncNotice(`恢复已停止：${reason}。这台设备原有的书房没有被替换。`)
+    } finally {
+      setRestoring(false)
+    }
+  }
+
   const localOnly = state.kind === 'local'
   const signedIn = state.kind === 'signed-in'
   const statusText = localOnly
@@ -200,11 +230,11 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
         {pendingDetails && <p className="cloud-pending-details">{pendingDetails}</p>}
 
         <div className="cloud-actions">
-          <button type="button" disabled={!signedIn || syncing} onClick={() => { void syncStructuredContent() }} title="同步名帖、书目、正文、阅读状态、痕迹与私有原书"><RefreshCw /><span>{syncing ? '正在收好…' : '收好书页与原书'}<small>EPUB 与封面一并私存</small></span></button>
-          <button type="button" disabled title="完整恢复流程接通后启用"><RotateCcw /><span>从云端恢复<small>重建这台设备的书房</small></span></button>
+          <button type="button" disabled={!signedIn || syncing || restoring} onClick={() => { void syncStructuredContent() }} title="同步名帖、书目、正文、阅读状态、痕迹与私有原书"><RefreshCw /><span>{syncing ? '正在收好…' : '立即收好'}<small>手动检查整间书房</small></span></button>
+          <button type="button" disabled={!signedIn || syncing || restoring} onClick={() => { void restoreFromCloud() }} title="用已完整收好的云端内容重建这台设备"><RotateCcw /><span>{restoring ? '正在恢复…' : '从云端恢复'}<small>重建这台设备的书房</small></span></button>
         </div>
         {syncNotice && <p className="cloud-room-notice" role="status">{syncNotice}</p>}
-        <p className="cloud-room-footnote">书页、痕迹与私有原书会在写入后、重新联网和回到书房时自动收好；这个按钮继续作为手动兜底。完整恢复保护通过验收后，这里会换成最终的“立即收好”。</p>
+        <p className="cloud-room-footnote">日常写入会自动收好，“立即收好”是手动兜底。“从云端恢复”只在重装或本机数据损坏时使用，并会先确认云端内容完整。</p>
       </section>
     </section>
   )
