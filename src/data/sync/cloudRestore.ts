@@ -87,7 +87,8 @@ export function createSupabaseCloudRestoreGateway(
         client.from('profiles').select('*').maybeSingle(),
         collectPages<Tables<'books'>>((from, to) => client.from('books').select('*').is('deleted_at', null).order('id').range(from, to)),
         collectPages<Tables<'book_sections'>>((from, to) => client.from('book_sections').select('*').is('deleted_at', null).order('id').range(from, to)),
-        collectPages<Tables<'reading_positions'>>((from, to) => client.from('reading_positions').select('*').is('deleted_at', null).order('book_id').range(from, to)),
+        // 最近停留被删除时远端直接删行，不使用 deleted_at 墓碑。
+        collectPages<Tables<'reading_positions'>>((from, to) => client.from('reading_positions').select('*').order('book_id').range(from, to)),
         collectPages<Tables<'bookmarks'>>((from, to) => client.from('bookmarks').select('*').is('deleted_at', null).order('book_id').range(from, to)),
         collectPages<Tables<'highlights'>>((from, to) => client.from('highlights').select('*').is('deleted_at', null).order('id').range(from, to)),
         collectPages<Tables<'annotations'>>((from, to) => client.from('annotations').select('*').is('deleted_at', null).order('id').range(from, to)),
