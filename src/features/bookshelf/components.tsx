@@ -30,10 +30,7 @@ export function BookCover({ book, large = false }: { book: ShelfBook; large?: bo
 export function SidebarMenuButton({ onOpen }: { onOpen: () => void }) {
   return (
     <button className="shelf-menu-button" type="button" onClick={onOpen} aria-label="打开侧边栏" title="打开侧边栏">
-      <span className="shelf-menu-mark" aria-hidden="true">
-        <i className="shelf-menu-leaf" />
-        <i className="shelf-menu-pull" />
-      </span>
+      <img className="shelf-menu-mark" src={`${import.meta.env.BASE_URL}decor/sidebar-door-leaf.png`} alt="" aria-hidden="true" />
     </button>
   )
 }
@@ -103,9 +100,7 @@ export function BrandHeader({
 export function PinnedBookSeal() {
   return (
     <span className="pinned-book-seal" aria-hidden="true">
-      <span className="seal-curve seal-curve-outer" />
-      <span className="seal-curve seal-curve-inner" />
-      <i>M</i>
+      <img src={`${import.meta.env.BASE_URL}decor/pinned-m-seal.png`} alt="" />
     </span>
   )
 }

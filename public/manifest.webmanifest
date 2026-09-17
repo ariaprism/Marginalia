@@ -1,0 +1,25 @@
+{
+  "name": "Marginalia",
+  "short_name": "Marginalia",
+  "description": "一间保存书籍、阅读位置与页边痕迹的私人书房。",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eee1ce",
+  "theme_color": "#e5d7c3",
+  "icons": [
+    {
+      "src": "pwa-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "pwa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
