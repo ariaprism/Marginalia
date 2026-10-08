@@ -163,7 +163,8 @@ export function ReadingExchangeDialog(props: Props) {
                 <label className="exchange-chapter-select"><span>选择章节</span><select value={chapterIndex} onChange={(event) => chooseChapter(Number(event.target.value))}>
                   {props.chapters.map((chapter, index) => {
                     const count = annotations.filter((item) => item.locator.position.chapterIndex === index).length
-                    return <option key={`${index}-${chapter.title}`} value={index} disabled={!count}>{chapter.chapter} · {chapter.title}{count ? `（${count} 条）` : ''}</option>
+                    const label = [chapter.chapter, chapter.title].filter(Boolean).join(' · ')
+                    return <option key={`${index}-${chapter.title}`} value={index} disabled={!count}>{label}{count ? `（${count} 条）` : ''}</option>
                   })}
                 </select></label>
                 <div className="exchange-invitations" role="group" aria-label="选择要递出的批注">

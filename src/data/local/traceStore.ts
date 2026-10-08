@@ -17,6 +17,8 @@ import {
   saveHighlight,
   saveMarginalia,
 } from './bookStore'
+import { getAllByIndex } from './db'
+import type { ReaderTrace } from '../../domain/reader'
 
 /**
  * Trace 与领域记录之间的读写层。
@@ -44,7 +46,9 @@ function highlightIdFor(bookId: string, position: TextPosition): string {
 
 function chapterLabel(chapters: ChapterText[], chapterIndex: number): string {
   const chapter = chapters[chapterIndex]
-  return chapter ? `${chapter.chapter} · ${chapter.title}` : `第 ${chapterIndex + 1} 章`
+  return chapter
+    ? [chapter.chapter, chapter.title].filter(Boolean).join(' · ')
+    : `第 ${chapterIndex + 1} 个阅读段落`
 }
 
 type Bundle = {
@@ -52,6 +56,16 @@ type Bundle = {
   highlight?: Highlight
   annotations: Annotation[]
   marginalia: Marginalia[]
+  readerTraces: ReaderTrace[]
+}
+
+type StoredReaderTrace = ReaderTrace & { readerBookId: string }
+
+async function getBookReaderTraces(bookId: string): Promise<ReaderTrace[]> {
+  const records = await getAllByIndex<StoredReaderTrace>('readerTraces', 'bookId', bookId)
+  return records
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+    .map(({ readerBookId: _, ...trace }) => trace)
 }
 
 /**
@@ -65,10 +79,11 @@ export async function loadTraces(
   chapters: ChapterText[],
   segmented: SegmentedChapter[],
 ): Promise<Trace[]> {
-  const [highlights, annotations, marginalia] = await Promise.all([
+  const [highlights, annotations, marginalia, readerTraces] = await Promise.all([
     getHighlights(bookId),
     getAnnotations(bookId),
     getMarginalia(bookId),
+    getBookReaderTraces(bookId),
   ])
 
   const bundles = new Map<string, Bundle>()
@@ -76,7 +91,7 @@ export async function loadTraces(
     const key = passageKey(locator.position)
     let bundle = bundles.get(key)
     if (!bundle) {
-      bundle = { locator, annotations: [], marginalia: [] }
+      bundle = { locator, annotations: [], marginalia: [], readerTraces: [] }
       bundles.set(key, bundle)
     }
     return bundle
@@ -85,6 +100,7 @@ export async function loadTraces(
   for (const highlight of highlights) bundleFor(highlight.locator).highlight = highlight
   for (const annotation of annotations) bundleFor(annotation.locator).annotations.push(annotation)
   for (const item of marginalia) bundleFor(item.locator).marginalia.push(item)
+  for (const item of readerTraces) bundleFor(item.locator).readerTraces.push(item)
 
   const paragraphs = chapters.map((chapter) => chapter.paragraphs)
   const traces: Trace[] = []
@@ -100,9 +116,19 @@ export async function loadTraces(
         id: annotation.id,
         text: annotation.text,
         createdAt: formatStoredTime(annotation.createdAt),
+        timestamp: annotation.createdAt,
       }))
     const reply = [...bundle.marginalia]
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))[0]
+    const companionNotes = bundle.readerTraces
+      .filter((item) => item.kind === 'annotation' && item.text)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+      .map<NoteEntry>((item) => ({
+        id: item.id,
+        text: item.text!,
+        createdAt: formatStoredTime(item.createdAt),
+        timestamp: item.createdAt,
+      }))
 
     traces.push({
       id: key,
@@ -114,8 +140,11 @@ export async function loadTraces(
       chapter: chapterLabel(chapters, position.chapterIndex),
       quote: position.selectedText,
       foxNotes: notes.length ? notes : undefined,
+      companionNotes: companionNotes.length ? companionNotes : undefined,
+      companionHighlighted: bundle.readerTraces.some((item) => item.kind === 'highlight'),
       fish: reply?.text,
       fishAt: reply ? formatStoredTime(reply.createdAt) : undefined,
+      fishTimestamp: reply?.createdAt,
       locator: bundle.locator,
       drifted: !resolved,
     })

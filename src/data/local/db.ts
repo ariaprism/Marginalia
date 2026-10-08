@@ -1,5 +1,5 @@
 const DB_NAME = 'marginalia'
-const DB_VERSION = 3
+const DB_VERSION = 5
 
 /**
  * 连接缓存。
@@ -68,6 +68,22 @@ function openFresh(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('syncState')) {
         db.createObjectStore('syncState', { keyPath: 'remoteUserId' })
+      }
+      if (!db.objectStoreNames.contains('readerProgress')) {
+        const readerProgressStore = db.createObjectStore('readerProgress', { keyPath: 'id' })
+        readerProgressStore.createIndex('readerId', 'readerId', { unique: false })
+        readerProgressStore.createIndex('bookId', 'bookId', { unique: false })
+      }
+      if (!db.objectStoreNames.contains('readerStates')) {
+        const readerStateStore = db.createObjectStore('readerStates', { keyPath: 'id' })
+        readerStateStore.createIndex('readerId', 'readerId', { unique: false })
+        readerStateStore.createIndex('bookId', 'bookId', { unique: false })
+      }
+      if (!db.objectStoreNames.contains('readerTraces')) {
+        const readerTraceStore = db.createObjectStore('readerTraces', { keyPath: 'id' })
+        readerTraceStore.createIndex('readerId', 'readerId', { unique: false })
+        readerTraceStore.createIndex('bookId', 'bookId', { unique: false })
+        readerTraceStore.createIndex('readerBookId', 'readerBookId', { unique: false })
       }
 
       // v2 把折页嵌在 ReadingProgress 中。v3 将它搬到独立 store，方便与远端

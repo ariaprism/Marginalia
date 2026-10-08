@@ -384,20 +384,24 @@ describe('Marginalia visual prototype', () => {
     expect(recent.querySelector('q')).not.toHaveTextContent('下一句不应出现')
   })
 
-  it('opens both reading exchange entrances from the book room menu', async () => {
+  it('manages the companion records per book from the room menu', async () => {
     await renderWithRainRoom(true)
     fireEvent.click(screen.getByRole('button', { name: '查看《雨夜书房》的书籍档案' }))
 
     fireEvent.click(screen.getByRole('button', { name: '管理这本书' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '递一页给她' }))
-    expect(screen.getByRole('dialog', { name: '递一页给她' })).toBeInTheDocument()
-    expect(await screen.findByRole('group', { name: '选择要递出的批注' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '关闭共读交换' }))
+    expect(screen.queryByRole('menuitem', { name: '递一页给她' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: '收回她的页边文字' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: '让她从头重读' }))
+    expect(screen.getByRole('dialog', { name: '让她从头重读《雨夜书房》？' })).toHaveTextContent(
+      '已有划线和批注会保留',
+    )
+    fireEvent.click(screen.getByRole('button', { name: '先留下' }))
 
     fireEvent.click(screen.getByRole('button', { name: '管理这本书' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: '收回她的页边文字' }))
-    expect(screen.getByRole('dialog', { name: '收回她的页边文字' })).toBeInTheDocument()
-    expect(screen.getByText(/选择.*按交换契约返回的 JSON/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: '清除她在本书的全部记录' }))
+    expect(screen.getByRole('dialog', { name: '清除她在《雨夜书房》的全部记录？' })).toHaveTextContent(
+      '此操作无法撤销',
+    )
   })
 
   it('removes an imported book and its parsed chapters from the local room', async () => {
@@ -478,12 +482,12 @@ describe('Marginalia visual prototype', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: '返回书架' }))
-    expect(await screen.findByText('上次读到 · 第 2 章')).toBeInTheDocument()
+    expect(await screen.findByText(/上次读到 · (第 2 个阅读段落|没有寄出的页码)/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '继续阅读《雨夜书房》' })).toBeInTheDocument()
 
     unmount()
     render(<App />)
-    expect(await screen.findByText('上次读到 · 第 2 章')).toBeInTheDocument()
+    expect(await screen.findByText(/上次读到 · (第 2 个阅读段落|没有寄出的页码)/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '继续阅读《雨夜书房》' }))
     await waitFor(() => expect(screen.queryByLabelText('正在打开书籍')).not.toBeInTheDocument())
     expect(screen.getByRole('button', { name: '打开折页' })).toBeInTheDocument()
@@ -633,6 +637,48 @@ describe('Marginalia visual prototype', () => {
     expect(within(detail).getByText(/也许书并不知道，只是它替那一刻保留了一个位置/)).toBeInTheDocument()
   })
 
+  it('uses the phone back button to close a note, reveal reader chrome, then return to the shelf', async () => {
+    const forwardSpy = vi.spyOn(window.history, 'forward')
+    await renderWithRainRoom()
+    fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》|继续阅读《雨夜书房》/ }))
+    const sentence = await screen.findByText('灯亮起来以前，书房先听见了雨。', {}, { timeout: 10_000 })
+    fireEvent.click(sentence)
+    fireEvent.click(screen.getByRole('button', { name: '留痕' }))
+    expect(screen.getByRole('dialog', { name: '留痕' })).toBeInTheDocument()
+
+    fireEvent.popState(window)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '留痕' })).not.toBeInTheDocument())
+    expect(screen.getByRole('article')).toBeInTheDocument()
+
+    fireEvent.popState(window)
+    await waitFor(() => expect(document.querySelector('.reader-topbar')).toHaveClass('is-visible'))
+
+    fireEvent.popState(window)
+    await screen.findByRole('button', { name: '藏入书籍' })
+    expect(forwardSpy).toHaveBeenCalledTimes(3)
+  }, 30_000)
+
+  it('uses the phone back button to leave rooms, import, and drawer pages for the shelf', async () => {
+    await renderWithRainRoom()
+
+    fireEvent.click(screen.getByRole('button', { name: '查看《雨夜书房》的书籍档案' }))
+    await screen.findByRole('heading', { name: '章节与痕迹' })
+    fireEvent.popState(window)
+    await screen.findByRole('button', { name: '查看《雨夜书房》的书籍档案' })
+
+    fireEvent.click(screen.getByRole('button', { name: '藏入书籍' }))
+    expect(screen.getByRole('dialog', { name: '藏入书籍' })).toBeInTheDocument()
+    fireEvent.popState(window)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '藏入书籍' })).not.toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: '打开侧边栏' }))
+    fireEvent.click(screen.getByRole('button', { name: /名帖/ }))
+    expect(screen.getByRole('heading', { name: '名帖', level: 1 })).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('complementary', { name: '侧边栏' })).not.toBeInTheDocument())
+    fireEvent.popState(window)
+    await screen.findByRole('button', { name: '查看《雨夜书房》的书籍档案' })
+  }, 20_000)
+
   it('selects and extends a contiguous sentence range', async () => {
     await renderWithRainRoom()
     fireEvent.click(screen.getByRole('button', { name: /打开《雨夜书房》|继续阅读《雨夜书房》/ }))
@@ -716,4 +762,5 @@ describe('Marginalia visual prototype', () => {
     fireEvent.click(screen.getByRole('button', { name: '抹去文字' }))
     await waitFor(() => expect(secondSentence).not.toHaveClass('has-annotation'))
   }, 10_000)
+
 })

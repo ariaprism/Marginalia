@@ -125,6 +125,7 @@ export async function savePreparedEpub(
         id: chapter.id,
         index: chapter.index,
         title: chapter.title,
+        inToc: chapter.inToc,
         href: chapter.href,
         html: chapter.html,
       })),

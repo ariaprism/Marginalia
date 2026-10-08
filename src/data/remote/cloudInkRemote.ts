@@ -7,6 +7,7 @@ import type { Marginalia, Visibility } from '../../domain/marginalia'
 import type { CompanionPronoun } from '../../domain/profile'
 import type { ReadingProgress } from '../../domain/readingProgress'
 import { extractChapterText } from '../../reader/chapterText'
+import { isSpineOnlyChapterHtml } from '../../reader/epubParser'
 import type { StoredChapter } from '../local/bookStore'
 import type { StoredProfile } from '../local/profileStore'
 import type { PushResult, SyncRemote } from '../sync/engine'
@@ -137,7 +138,8 @@ export function bookPayload(row: BookRow): Book {
 export function chapterPayload(row: ChapterRow): StoredChapter {
   return {
     id: row.id, bookId: row.book_id, index: row.spine_index,
-    title: row.title, href: row.href, html: row.content_html,
+    title: row.title, inToc: !isSpineOnlyChapterHtml(row.content_html),
+    href: row.href, html: row.content_html,
   }
 }
 

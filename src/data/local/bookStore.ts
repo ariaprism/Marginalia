@@ -361,6 +361,9 @@ export async function cleanupOrphanedBookData(bookId: string): Promise<boolean> 
     'highlights',
     'annotations',
     'marginalia',
+    'readerProgress',
+    'readerStates',
+    'readerTraces',
     'outbox',
   ]
   return new Promise<boolean>((resolve, reject) => {
@@ -377,6 +380,9 @@ export async function cleanupOrphanedBookData(bookId: string): Promise<boolean> 
       deleteByBookIndex(transaction.objectStore('highlights'), bookId)
       deleteByBookIndex(transaction.objectStore('annotations'), bookId)
       deleteByBookIndex(transaction.objectStore('marginalia'), bookId)
+      deleteByBookIndex(transaction.objectStore('readerProgress'), bookId)
+      deleteByBookIndex(transaction.objectStore('readerStates'), bookId)
+      deleteByBookIndex(transaction.objectStore('readerTraces'), bookId)
       const outboxRequest = transaction.objectStore('outbox').openCursor()
       outboxRequest.onsuccess = () => {
         const cursor = outboxRequest.result
@@ -408,6 +414,9 @@ export async function deleteBookCompletely(bookId: string): Promise<void> {
     'highlights',
     'annotations',
     'marginalia',
+    'readerProgress',
+    'readerStates',
+    'readerTraces',
     'outbox',
   ]
   await new Promise<void>((resolve, reject) => {
@@ -420,6 +429,9 @@ export async function deleteBookCompletely(bookId: string): Promise<void> {
     deleteByBookIndex(transaction.objectStore('highlights'), bookId)
     deleteByBookIndex(transaction.objectStore('annotations'), bookId)
     deleteByBookIndex(transaction.objectStore('marginalia'), bookId)
+    deleteByBookIndex(transaction.objectStore('readerProgress'), bookId)
+    deleteByBookIndex(transaction.objectStore('readerStates'), bookId)
+    deleteByBookIndex(transaction.objectStore('readerTraces'), bookId)
     putOutboxOperation(transaction.objectStore('outbox'), createSyncOperation({
       entityType: 'book', entityId: bookId, operation: 'delete',
     }))

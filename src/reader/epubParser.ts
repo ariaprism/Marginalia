@@ -17,6 +17,8 @@ export type EpubChapter = {
   id: string
   index: number
   title: string
+  /** 是否来自原书目录，或在无目录时由明确的章节语义推断得到。 */
+  inToc: boolean
   href: string
   /** 章节 XHTML 原始字符串。 */
   html: string
@@ -173,6 +175,33 @@ function parseChapterTitle(html: string): string {
   return titleMatch?.[1].trim() ?? ''
 }
 
+const FRONT_MATTER_TITLE = /版权|版权页|目录|目次|扉页|书名页|出版说明|题记|献词|copyright|contents|title\s*page|colophon|epigraph/i
+const CHAPTERISH_TITLE = /^(?:(?:[一二三四五六七八九十百千万〇零]+|\d+)\s*[、.．]?\s*$|第.{1,12}[章节篇卷部]|chapter\s*[\divxlcdm]+|序|序言|前言|楔子|引子|尾声|后记|跋|附录|prologue|epilogue|preface|afterword)/i
+
+export const SPINE_ONLY_MARKER = '<!-- marginalia:spine-only -->'
+
+export function isSpineOnlyChapterHtml(html: string): boolean {
+  return html.startsWith(SPINE_ONLY_MARKER)
+}
+
+/** 只有 EPUB 没有可用目录时，才把明确的章节语义作为保守 fallback。 */
+function inferTocTitle(html: string): string | undefined {
+  const parser = new DOMParser()
+  let doc = parser.parseFromString(html, 'application/xhtml+xml')
+  if (doc.querySelector('parsererror') || !doc.body) doc = parser.parseFromString(html, 'text/html')
+  const chapterRoot = Array.from(doc.querySelectorAll('[epub\\:type], [role]')).find((element) => {
+    const epubType = element.getAttribute('epub:type')
+      ?? element.getAttributeNS('http://www.idpf.org/2007/ops', 'type')
+      ?? ''
+    return epubType.split(/\s+/).includes('chapter') || element.getAttribute('role') === 'doc-chapter'
+  })
+  const heading = (chapterRoot?.querySelector('h1, h2') ?? doc.querySelector('h1, h2'))?.textContent
+    ?.replace(/\s+/g, ' ').trim()
+  if (!heading || FRONT_MATTER_TITLE.test(heading)) return undefined
+  if (chapterRoot || CHAPTERISH_TITLE.test(heading)) return heading
+  return undefined
+}
+
 export async function parseEpub(input: ArrayBuffer | Uint8Array): Promise<ParsedEpub> {
   const zip = await JSZip.loadAsync(input)
 
@@ -231,8 +260,19 @@ export async function parseEpub(input: ArrayBuffer | Uint8Array): Promise<Parsed
 
     const html = decodeText(await chapterFile.async('uint8array'))
     const index = chapters.length
-    const title = titleByPath.get(path) || parseChapterTitle(html) || `第 ${index + 1} 节`
-    chapters.push({ id: idref, index, title, href: item.href, html })
+    const tocTitle = titleByPath.get(path)
+    const inferredTitle = toc.length === 0 ? inferTocTitle(html) : undefined
+    const title = tocTitle || inferredTitle || parseChapterTitle(html)
+    const inToc = Boolean(tocTitle || inferredTitle)
+    chapters.push({
+      id: idref,
+      index,
+      title,
+      inToc,
+      href: item.href,
+      // 云端章节表暂时不扩 schema；标记随 content_html 往返，恢复时仍能重建目录语义。
+      html: inToc ? html : `${SPINE_ONLY_MARKER}${html}`,
+    })
   }
 
   const manifestItems = Array.from(opf.manifest.values())

@@ -9,13 +9,19 @@
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "local-library": "node local-library/server.mjs",
+    "dev:shared": "node local-library/dev.mjs",
+    "mcp:local": "node local-library/mcp.mjs",
+    "test:local-library": "node --test local-library/local.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@supabase/supabase-js": "2.112.3",
     "lucide-react": "1.25.0",
     "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "react-dom": "19.2.7",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "6.9.1",

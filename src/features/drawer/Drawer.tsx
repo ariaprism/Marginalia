@@ -44,7 +44,7 @@ export function DrawerOverlay({
       <button className={`shelf-sidebar-backdrop ${closing ? 'is-closing' : ''}`} type="button" onClick={onClose} aria-label="关闭侧边栏" />
       <aside className={`shelf-sidebar ${closing ? 'is-closing' : ''}`} aria-label="侧边栏">
         <span className="sidebar-window-shadow" aria-hidden="true" />
-        <img className="sidebar-window-botanical" src={`${import.meta.env.BASE_URL}decor/sidebar-window-botanical.png`} alt="" aria-hidden="true" />
+        <img className="sidebar-window-botanical" src={`${import.meta.env.BASE_URL}decor/sidebar-window-botanical-v2.png`} alt="" aria-hidden="true" />
         <header className="sidebar-heading"><div><small>MARGINALIA</small><h2>目录</h2></div></header>
         <nav className="drawer-index" aria-label="书房抽屉">
           <h3><span>书房</span><small>THE READING ROOM</small></h3>

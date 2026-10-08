@@ -1,13 +1,15 @@
 import { BarChart3, Highlighter, ListTree, SunMoon, Type, X } from 'lucide-react'
 import type { ChapterText } from '../../reader/bookContent'
-import type { Trace } from '../../reader/trace'
+import { orderedTraceNotes, type Trace } from '../../reader/trace'
 import type { ReaderTheme, ReaderTypeface } from './useReaderAppearance'
 
 export type ReaderPanel = 'toc' | 'traces' | 'stats' | 'type' | null
 
 function traceLineClass(trace: Trace) {
+  if (trace.highlighted && trace.companionHighlighted) return 'trace-line-highlight trace-line-shared-highlight'
   if (trace.highlighted) return 'trace-line-highlight'
-  if (trace.foxNotes?.length) return 'trace-line-annotation'
+  if (trace.companionHighlighted) return 'trace-line-companion-highlight'
+  if (trace.foxNotes?.length || trace.companionNotes?.length || trace.fish) return 'trace-line-annotation'
   return ''
 }
 
@@ -48,9 +50,9 @@ export function ReaderControls(props: Props) {
       {props.panel && (
         <section className="reader-panel">
           <div className="panel-handle" />
-          {props.panel === 'toc' && <><PanelHeading eyebrow="CONTENTS" title="目录" close={close} /><div className="toc-list">{props.chapters.map((chapter, index) => <button className={index === props.currentChapterIndex ? 'is-current' : ''} type="button" key={chapter.title} onClick={() => props.onJumpToChapter(index)}><span>{chapter.chapter}</span><strong>{chapter.title}</strong><small>{String((props.chapterStarts[index] ?? 0) + 1).padStart(2, '0')}</small></button>)}</div></>}
-          {props.panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={close} /><div className="trace-list">{props.traces.length === 0 ? <p className="panel-empty">这本书还没有留下痕迹。</p> : [...props.traces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => props.onJumpToTrace(trace)}><small>{trace.chapter}</small><blockquote>“<span className={traceLineClass(trace)}>{trace.quote}</span>”</blockquote>{trace.foxNotes?.map((note) => <p key={note.id}><b>{props.userLabel}</b>：{note.text}</p>)}{trace.fish && <p className="fish-note"><b>{props.companionLabel}</b>：{trace.fish}</p>}</button>)}</div></>}
-          {props.panel === 'stats' && <><PanelHeading eyebrow="READING LIFE" title="阅读统计" close={close} /><div className="stats-grid stats-grid-v2"><div><strong>{Math.round(((props.pageIndex + 1) / props.totalPages) * 100)}<sup>%</sup></strong><small>当前所在位置</small></div><div><strong>{props.currentChapterIndex + 1} / {props.chapters.length} 章</strong><small>当前章节</small></div><div><strong>{props.traces.length} 条</strong><small>笔记与划线</small></div></div></>}
+          {props.panel === 'toc' && <><PanelHeading eyebrow="CONTENTS" title="目录" close={close} /><div className="toc-list">{props.chapters.map((chapter, index) => chapter.inToc === false ? null : <button className={[index === props.currentChapterIndex ? 'is-current' : '', chapter.chapter ? 'has-chapter-label' : ''].filter(Boolean).join(' ')} type="button" key={`${index}-${chapter.title}`} onClick={() => props.onJumpToChapter(index)}>{chapter.chapter && <span>{chapter.chapter}</span>}<strong>{chapter.title}</strong><small>{String((props.chapterStarts[index] ?? 0) + 1).padStart(2, '0')}</small></button>)}</div></>}
+          {props.panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={close} /><div className="trace-list">{props.traces.length === 0 ? <p className="panel-empty">这本书还没有留下痕迹。</p> : [...props.traces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => props.onJumpToTrace(trace)}><small>{trace.chapter}</small><blockquote>“<span className={traceLineClass(trace)}>{trace.quote}</span>”</blockquote>{orderedTraceNotes(trace).map((note) => <p className={note.actor === 'companion' ? 'fish-note' : ''} key={note.id}><b>{note.actor === 'user' ? props.userLabel : props.companionLabel}</b>：{note.text}</p>)}</button>)}</div></>}
+          {props.panel === 'stats' && <><PanelHeading eyebrow="READING LIFE" title="阅读统计" close={close} /><div className="stats-grid stats-grid-v2"><div><strong>{Math.round(((props.pageIndex + 1) / props.totalPages) * 100)}<sup>%</sup></strong><small>当前所在位置</small></div><div><strong>{props.chapters.filter((chapter) => chapter.inToc !== false).length} 节</strong><small>原书目录</small></div><div><strong>{props.traces.length} 条</strong><small>笔记与划线</small></div></div></>}
           {props.panel === 'type' && <><PanelHeading eyebrow="TYPESETTING" title="排版" close={close} /><div className="type-settings">
             <label><span>字号 <small>{props.fontSize}px</small></span><input type="range" min="16" max="25" value={props.fontSize} onChange={(event) => props.onFontSizeChange(Number(event.target.value))} /></label>
             <label><span>行距 <small>{props.lineHeight.toFixed(1)}</small></span><input type="range" min="1.5" max="2.3" step="0.1" value={props.lineHeight} onChange={(event) => props.onLineHeightChange(Number(event.target.value))} /></label>

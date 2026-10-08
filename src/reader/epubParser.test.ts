@@ -17,6 +17,7 @@ describe('epubParser', () => {
 
     expect(epub.chapters).toHaveLength(rainRoomChapters.length)
     expect(epub.chapters[0].title).toBe('雨先抵达')
+    expect(epub.chapters.every((chapter) => chapter.inToc)).toBe(true)
     expect(epub.chapters[0].html).toContain('灯亮起来以前，书房先听见了雨')
   })
 

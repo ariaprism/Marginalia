@@ -4,6 +4,10 @@ import { getSupabaseClient } from '../../data/remote/supabaseClient'
 import { runCloudSync } from '../../data/sync/cloudSync'
 import { OUTBOX_CHANGED_EVENT } from '../../data/sync/syncSignals'
 import { cloudConnectionEnabled } from './config'
+import {
+  CLOUD_ACCOUNT_BINDING_CHANGED_EVENT,
+  inspectCloudAccountAccess,
+} from './cloudAccountGuard'
 
 const WRITE_DEBOUNCE_MS = 2500
 const REALTIME_DEBOUNCE_MS = 350
@@ -13,6 +17,7 @@ export function useAutomaticCloudSync(onLocalContentChanged: () => void): void {
   const enabled = cloudConnectionEnabled()
   const client = enabled ? getSupabaseClient() : undefined
   const [session, setSession] = useState<Session | null>(null)
+  const [allowedUserId, setAllowedUserId] = useState<string>()
   const timerRef = useRef<number | undefined>(undefined)
   const foregroundCatchUpRef = useRef<number | undefined>(undefined)
   const callbackRef = useRef(onLocalContentChanged)
@@ -26,11 +31,12 @@ export function useAutomaticCloudSync(onLocalContentChanged: () => void): void {
   }, [])
 
   const syncNow = useCallback(() => {
-    if (!client || !session || (typeof navigator !== 'undefined' && !navigator.onLine)) return
+    if (!client || !session || allowedUserId !== session.user.id
+      || (typeof navigator !== 'undefined' && !navigator.onLine)) return
     void runCloudSync(client, session.user.id)
       .then(() => callbackRef.current())
       .catch((error) => console.warn('自动收好暂未成功；内容仍安全留在本机。', error))
-  }, [client, session])
+  }, [allowedUserId, client, session])
 
   const schedule = useCallback((delay: number) => {
     cancelScheduled()
@@ -54,7 +60,28 @@ export function useAutomaticCloudSync(onLocalContentChanged: () => void): void {
   }, [client])
 
   useEffect(() => {
-    if (!client || !session) {
+    let active = true
+    const check = () => {
+      if (!session) {
+        setAllowedUserId(undefined)
+        return
+      }
+      void inspectCloudAccountAccess(session.user.id).then((access) => {
+        if (active) setAllowedUserId(access.kind === 'allowed' ? access.ownerId : undefined)
+      }).catch(() => {
+        if (active) setAllowedUserId(undefined)
+      })
+    }
+    check()
+    window.addEventListener(CLOUD_ACCOUNT_BINDING_CHANGED_EVENT, check)
+    return () => {
+      active = false
+      window.removeEventListener(CLOUD_ACCOUNT_BINDING_CHANGED_EVENT, check)
+    }
+  }, [session])
+
+  useEffect(() => {
+    if (!client || !session || allowedUserId !== session.user.id) {
       cancelScheduled()
       return
     }
@@ -102,5 +129,5 @@ export function useAutomaticCloudSync(onLocalContentChanged: () => void): void {
       document.removeEventListener('visibilitychange', requestOnVisibility)
       if (channel) void client.removeChannel(channel)
     }
-  }, [cancelScheduled, client, schedule, session, syncNow])
+  }, [allowedUserId, cancelScheduled, client, schedule, session, syncNow])
 }

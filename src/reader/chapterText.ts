@@ -1,6 +1,8 @@
 export type ChapterText = {
   chapter: string
   title: string
+  /** 在书籍小房间的原书目录中显示；不影响 spine 连续阅读顺序。 */
+  inToc?: boolean
   kicker: string
   paragraphs: string[]
   /** 原 EPUB 中与目录章名重复的开头标题；保留索引供 Locator 使用，但阅读器不重复渲染。 */

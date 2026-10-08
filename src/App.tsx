@@ -6,11 +6,11 @@ import {
   ChevronRight,
   Copy,
   CornerUpLeft,
+  Eraser,
   Highlighter,
-  Inbox,
   MessageSquareText,
   Pin,
-  Send,
+  RotateCcw,
   SquarePen,
   Trash2,
   X,
@@ -41,6 +41,7 @@ import {
   removeNote as deleteNoteRecord,
 } from './data/local/traceStore'
 import { cleanupLegacySampleData } from './data/local/seedSampleTraces'
+import { clearReadersForBook, resetReadersForBook } from './data/local/readerStore'
 import { createLocator, extractContext, type Locator } from './domain/locator'
 import {
   createReadingProgress,
@@ -78,14 +79,13 @@ import { loadBookChapters, type ChapterText } from './reader/bookContent'
 import { ReaderControls, type ReaderPanel } from './features/reader/ReaderControls'
 import { useReaderAppearance } from './features/reader/useReaderAppearance'
 import { useAutomaticCloudSync } from './features/cloud/useAutomaticCloudSync'
-import { ReadingExchangeDialog } from './features/reading-exchange/ReadingExchangeDialog'
 import {
   locatorFromSentenceRange,
   resolveLocator,
   segmentChapters,
   sentenceTextAtLocator,
 } from './reader/sentenceAnchor'
-import type { NoteEntry, Trace } from './reader/trace'
+import { orderedTraceNotes, traceAtSentence, type NoteEntry, type Trace } from './reader/trace'
 import { pageAtTextOffset, textOffsetAtPage } from './reader/pageTextAnchor'
 import './App.css'
 
@@ -97,8 +97,10 @@ type PageAnchor = SentenceSelection
 const DAY_THEME_COLOR = '#e5d7c3'
 const NIGHT_THEME_COLOR = '#211d1b'
 function traceLineClass(trace: Trace) {
+  if (trace.highlighted && trace.companionHighlighted) return 'trace-line-highlight trace-line-shared-highlight'
   if (trace.highlighted) return 'trace-line-highlight'
-  if (trace.foxNotes?.length) return 'trace-line-annotation'
+  if (trace.companionHighlighted) return 'trace-line-companion-highlight'
+  if (trace.foxNotes?.length || trace.companionNotes?.length || trace.companionHighlighted) return 'trace-line-annotation'
   return ''
 }
 
@@ -160,7 +162,8 @@ function App() {
   const [roomMenuOpen, setRoomMenuOpen] = useState(false)
   const [deleteBookDialogOpen, setDeleteBookDialogOpen] = useState(false)
   const [deletingBook, setDeletingBook] = useState(false)
-  const [exchangeDialog, setExchangeDialog] = useState<'export' | 'import' | null>(null)
+  const [readerRecordsAction, setReaderRecordsAction] = useState<'restart' | 'clear' | null>(null)
+  const [updatingReaderRecords, setUpdatingReaderRecords] = useState(false)
   const [filter, setFilter] = useState<ShelfFilter>('all')
   const [readerChapters, setReaderChapters] = useState<ChapterText[]>([])
   const [readerChaptersReady, setReaderChaptersReady] = useState(true)
@@ -233,6 +236,7 @@ function App() {
   const bookTouchWriteRef = useRef(Promise.resolve())
   const longPressTimerRef = useRef<number | null>(null)
   const longPressTriggeredRef = useRef<string | null>(null)
+  const browserBackHandlerRef = useRef<() => boolean>(() => false)
   const bookRecencyClockRef = useRef(Math.max(
     0,
     ...Object.values(bookRecency).map((timestamp) => Date.parse(timestamp) || 0),
@@ -313,7 +317,8 @@ function App() {
       return {
         ...book,
         progress: progress.totalProgress,
-        lastChapter: `第 ${progress.locator.position.chapterIndex + 1} 章`,
+        lastChapter: [chapters[progress.locator.position.chapterIndex]?.chapter, chapters[progress.locator.position.chapterIndex]?.title]
+          .filter(Boolean).join(' · ') || `第 ${progress.locator.position.chapterIndex + 1} 个阅读段落`,
         quote,
       }
     })
@@ -539,19 +544,21 @@ function App() {
   const selectedRangeTrace = useMemo(() => {
     if (!sentenceSelection) return undefined
     return bookTraces.find((trace) => trace.chapterIndex === sentenceSelection.chapterIndex
-      && trace.sentenceStart === sentenceSelection.start
-      && trace.sentenceEnd === sentenceSelection.end)
+      && trace.sentenceStart !== undefined
+      && trace.sentenceEnd !== undefined
+      && trace.sentenceStart <= sentenceSelection.start
+      && trace.sentenceEnd >= sentenceSelection.end)
   }, [bookTraces, sentenceSelection])
-  const selectedRangeIsHighlighted = Boolean(selectedRangeTrace && selectedRangeTrace.highlighted !== false)
+  const selectedRangeIsHighlighted = Boolean(selectedRangeTrace?.highlighted)
   const activeNoteTrace = useMemo(
     () => bookTraces.find((trace) => trace.id === noteTargetTraceId),
     [bookTraces, noteTargetTraceId],
   )
   const noteTrace = activeNoteTrace ?? selectedRangeTrace
-  const noteQuoteLineClass = noteTrace?.highlighted
-    ? 'trace-line-highlight'
-    : 'trace-line-annotation'
-  const noteEntries = noteTrace?.foxNotes ?? []
+  const noteQuoteLineClass = noteTrace ? traceLineClass(noteTrace) : 'trace-line-annotation'
+  const timelineNotes = useMemo(() => orderedTraceNotes(noteTrace), [noteTrace])
+  const activeTraceTimelineNotes = useMemo(() => orderedTraceNotes(activeTrace), [activeTrace])
+  const hasVisibleNotes = timelineNotes.length > 0
 
   const clearToast = () => setToast(null)
 
@@ -811,7 +818,11 @@ function App() {
   const handleSentenceClick = (event: React.MouseEvent<HTMLSpanElement>, chapterIndex: number, sentenceIndex: number) => {
     event.stopPropagation()
     if (!sentenceSelection || sentenceSelection.chapterIndex !== chapterIndex) {
-      applySentenceSelection({ chapterIndex, start: sentenceIndex, end: sentenceIndex })
+      const matchedTrace = traceAtSentence(bookTraces, chapterIndex, sentenceIndex)
+      applySentenceSelection(matchedTrace?.sentenceStart !== undefined
+        && matchedTrace.sentenceEnd !== undefined
+        ? { chapterIndex, start: matchedTrace.sentenceStart, end: matchedTrace.sentenceEnd }
+        : { chapterIndex, start: sentenceIndex, end: sentenceIndex })
       return
     }
 
@@ -1331,13 +1342,96 @@ function App() {
     setChromeVisible(false)
   }
 
+  const confirmReaderRecordsAction = async () => {
+    if (!readerRecordsAction || updatingReaderRecords) return
+    const action = readerRecordsAction
+    setUpdatingReaderRecords(true)
+    try {
+      if (action === 'restart') {
+        await resetReadersForBook(roomBook.id)
+      } else {
+        await clearReadersForBook(roomBook.id)
+        await refreshTraces()
+      }
+      setReaderRecordsAction(null)
+      showToast(action === 'restart'
+        ? `已经让${companionSubject}从头重读《${roomBook.title}》。`
+        : `已经清除${companionSubject}在《${roomBook.title}》的全部记录。`)
+    } catch (error) {
+      showToast('这次没有清理成功', error instanceof Error ? error.message : String(error))
+    } finally {
+      setUpdatingReaderRecords(false)
+    }
+  }
+
+  browserBackHandlerRef.current = () => {
+    if (noteMenuTargetId) { setNoteMenuTargetId(null); return true }
+    if (noteComposerOpen) { closeNoteSheet(); return true }
+    if (activeTrace) { setActiveTrace(null); return true }
+    if (deleteBookDialogOpen) { setDeleteBookDialogOpen(false); return true }
+    if (readerRecordsAction) { setReaderRecordsAction(null); return true }
+    if (descriptionOpen) { setDescriptionOpen(false); return true }
+    if (importDialogOpen) { closeImportDialog(); return true }
+    if (sidebarPhase) { closeSidebar(); return true }
+    if (roomMenuOpen) { setRoomMenuOpen(false); return true }
+    if (endSlipPhase) { setEndSlipPhase(null); return true }
+    if (bookmarkMenuOpen) { setBookmarkMenuOpen(false); return true }
+    if (panel) { setPanel(null); return true }
+    if (sentenceSelection) { clearSelection(); return true }
+    if (screen === 'reader') {
+      if (!chromeVisible) {
+        setChromeVisible(true)
+        return true
+      }
+      saveCurrentPagePosition()
+      setChromeVisible(false)
+      setScreen('shelf')
+      return true
+    }
+    if (screen === 'room') {
+      setRoomMenuOpen(false)
+      setScreen('shelf')
+      return true
+    }
+    if (drawerPage) {
+      selectSidebarSection('shelf')
+      return true
+    }
+    return false
+  }
+
+  useEffect(() => {
+    const state = window.history.state as Record<string, unknown> | null
+    if (!state?.marginaliaGuard) {
+      window.history.replaceState({ ...state, marginaliaBase: true }, '')
+      window.history.pushState({ marginaliaGuard: true }, '')
+    }
+    const onPopState = (event: PopStateEvent) => {
+      // history.forward() 回到保护页时还会再触发一次 popstate；这一次只复位，
+      // 不应重复执行页面内的返回动作。
+      if ((event.state as Record<string, unknown> | null)?.marginaliaGuard) {
+        return
+      }
+      if (browserBackHandlerRef.current()) {
+        // 回到基准页后，再前进到同一个保护页。与在 popstate 中临时 push
+        // 新记录相比，这在 Android Chrome 上更稳定，也不会让第二次返回逃出应用。
+        window.history.forward()
+      } else {
+        window.history.back()
+      }
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
   if (screen === 'room') {
     const hasChapters = readerChaptersReady && readerChapters.length > 0
     const roomBookDeletable = loadedBooks.some((book) => book.id === roomBook.id)
     const resumeChapterIndex = currentProgress?.locator.position.chapterIndex
     const resumeChapter = resumeChapterIndex === undefined
       ? undefined
-      : readerChapters[resumeChapterIndex]?.chapter ?? `第 ${resumeChapterIndex + 1} 章`
+      : [readerChapters[resumeChapterIndex]?.chapter, readerChapters[resumeChapterIndex]?.title]
+          .filter(Boolean).join(' · ') || `第 ${resumeChapterIndex + 1} 个阅读段落`
     const resumeQuote = currentProgress
       ? sentenceTextAtLocator(
           currentProgress.locator.position,
@@ -1363,11 +1457,11 @@ function App() {
                 {roomBook.status === 'finished' ? <CornerUpLeft /> : <Check />}
                 {roomBook.status === 'finished' ? '从头重温' : '标记读完'}
               </button>
-              <button type="button" role="menuitem" onClick={() => { setRoomMenuOpen(false); setExchangeDialog('export') }}>
-                <Send />递一页给她
+              <button type="button" role="menuitem" onClick={() => { setRoomMenuOpen(false); setReaderRecordsAction('restart') }}>
+                <RotateCcw />让{companionSubject}从头重读
               </button>
-              <button type="button" role="menuitem" onClick={() => { setRoomMenuOpen(false); setExchangeDialog('import') }}>
-                <Inbox />收回她的页边文字
+              <button type="button" role="menuitem" onClick={() => { setRoomMenuOpen(false); setReaderRecordsAction('clear') }}>
+                <Eraser />清除{companionSubject}在本书的全部记录
               </button>
               <button type="button" role="menuitem" onClick={() => { setRoomMenuOpen(false); setDeleteBookDialogOpen(true) }}>
                 <Trash2 />移出书房
@@ -1397,11 +1491,12 @@ function App() {
           <section className="room-chapters">
             <div className="room-section-title"><ChapterTraceMark /><h2>章节与痕迹</h2></div>
             {readerChapters.map((chapter, index) => {
+              if (chapter.inToc === false) return null
               const chapterTraces = bookTraces.filter((trace) => trace.chapterIndex === index)
               return (
-                <div className="room-chapter-group" key={chapter.title}>
+                <div className={`room-chapter-group${chapter.chapter ? ' has-chapter-label' : ''}`} key={chapter.title}>
                   <button className="room-chapter-heading" type="button" onClick={() => openReaderAtChapter(index)}>
-                    <span>{chapter.chapter}</span><strong>{chapter.title}</strong><small>{chapterTraces.length ? `${chapterTraces.length} 条痕迹` : '尚无痕迹'}</small><ChevronRight />
+                    {chapter.chapter && <span>{chapter.chapter}</span>}<strong>{chapter.title}</strong><small>{chapterTraces.length ? `${chapterTraces.length} 条痕迹` : '尚无痕迹'}</small><ChevronRight />
                   </button>
                   {chapterTraces.length > 0 && (
                     <div className="room-trace-list">
@@ -1414,8 +1509,7 @@ function App() {
                             : openReaderAtChapter(index)}
                         >
                           <q><span className={traceLineClass(trace)}>{trace.quote}</span></q>
-                          {trace.foxNotes?.map((note) => <p key={note.id}><b>{userLabel}</b>：{note.text}</p>)}
-                          {trace.fish && <p className="fish-note"><b>{companionLabel}</b>：{trace.fish}</p>}
+                          {orderedTraceNotes(trace).map((note) => <p className={note.actor === 'companion' ? 'fish-note' : ''} key={note.id}><b>{note.actor === 'user' ? userLabel : companionLabel}</b>：{note.text}</p>)}
                         </button>
                       ))}
                     </div>
@@ -1449,17 +1543,24 @@ function App() {
             </section>
           </div>
         )}
-        {exchangeDialog && (
-          <ReadingExchangeDialog
-            mode={exchangeDialog}
-            book={{ id: roomBook.id, title: roomBook.title, author: roomBook.author }}
-            chapters={readerChapters}
-            userName={userLabel}
-            companionName={companionLabel}
-            onClose={() => setExchangeDialog(null)}
-            onImported={refreshTraces}
-            onNotice={showToast}
-          />
+        {readerRecordsAction && (
+          <div className="delete-book-backdrop" onClick={() => { if (!updatingReaderRecords) setReaderRecordsAction(null) }}>
+            <section className="delete-book-dialog" role="dialog" aria-modal="true" aria-labelledby="reader-records-title" onClick={(event) => event.stopPropagation()}>
+              <small>{readerRecordsAction === 'restart' ? 'RESTART THE READING' : 'CLEAR READER RECORDS'}</small>
+              <h2 id="reader-records-title">{readerRecordsAction === 'restart'
+                ? `让${companionSubject}从头重读《${roomBook.title}》？`
+                : `清除${companionSubject}在《${roomBook.title}》的全部记录？`}</h2>
+              <p>{readerRecordsAction === 'restart'
+                ? `会清除${companionSubject}在本书的阅读位置与 Reader State；已有划线和批注会保留。`
+                : `会清除${companionSubject}在本书的阅读位置、Reader State、全部划线和批注。此操作无法撤销。`}</p>
+              <div>
+                <button type="button" onClick={() => setReaderRecordsAction(null)} disabled={updatingReaderRecords}>先留下</button>
+                <button className="confirm-delete-book" type="button" onClick={() => { void confirmReaderRecordsAction() }} disabled={updatingReaderRecords}>
+                  {updatingReaderRecords ? '正在整理…' : readerRecordsAction === 'restart' ? '确认从头重读' : '确认全部清除'}
+                </button>
+              </div>
+            </section>
+          </div>
         )}
         <Toast toast={toast} onClose={clearToast} />
       </main>
@@ -1496,7 +1597,7 @@ function App() {
 
         {bookmarkMenuOpen && currentBookmark && (
           <section className="bookmark-menu" aria-label="折页">
-            <small>原折 · 第 {currentBookmark.locator.position.chapterIndex + 1} 章</small>
+            <small>原折 · 第 {currentBookmark.locator.position.chapterIndex + 1} 个阅读段落</small>
             <q>{currentBookmark.locator.position.selectedText}</q>
             <div>
               {!bookmarkIsOnCurrentPage && <button type="button" onClick={returnToBookmark}>回到原折</button>}
@@ -1517,14 +1618,14 @@ function App() {
           } as React.CSSProperties}
         >
           <div className="page-grain" aria-hidden="true" />
-          <div className="running-header">{currentChapter.chapter} · {currentChapter.title}</div>
+          <div className="running-header">{[currentChapter.chapter, currentChapter.title].filter(Boolean).join(' · ')}</div>
           <div className="reader-text-viewport" ref={viewportRef}>
             <div className="reader-flow" ref={flowRef} style={{ transform: `translateX(-${pageIndex * 100}%)` }}>
               {readerChapters.map((chapter, chapterIndex) => (
                 <section className="chapter-section" data-chapter-index={chapterIndex} key={chapter.title}>
-                  <div className="chapter-heading">
-                    <span>{chapter.chapter}</span><h1>{chapter.title}</h1><p>{chapter.kicker}</p>
-                  </div>
+                  {(chapter.chapter || chapter.title || chapter.kicker) && <div className="chapter-heading">
+                    {chapter.chapter && <span>{chapter.chapter}</span>}{chapter.title && <h1>{chapter.title}</h1>}{chapter.kicker && <p>{chapter.kicker}</p>}
+                  </div>}
                   {segmentedChapters[chapterIndex].paragraphs.map((paragraph, paragraphIndex) => (
                     chapter.hiddenParagraphIndexes?.includes(paragraphIndex) ? null : <p key={`${paragraphIndex}-${chapter.paragraphs[paragraphIndex]}`} className={paragraphIndex === chapter.openingParagraphIndex ? 'opening-paragraph' : ''}>
                       {paragraph.map((sentence) => {
@@ -1533,21 +1634,17 @@ function App() {
                         const isSelected = sentenceSelection?.chapterIndex === chapterIndex
                           && sentence.index >= sentenceSelection.start
                           && sentence.index <= sentenceSelection.end
-                        const hasUserHighlight = bookTraces.some((trace) => trace.chapterIndex === chapterIndex
+                        const matchingTraces = bookTraces.filter((trace) => trace.chapterIndex === chapterIndex
                           && trace.sentenceStart !== undefined
                           && trace.sentenceEnd !== undefined
-                          && trace.highlighted === true
                           && sentence.index >= trace.sentenceStart
                           && sentence.index <= trace.sentenceEnd)
-                        const hasAnnotation = !hasUserHighlight && bookTraces.some((trace) => trace.chapterIndex === chapterIndex
-                          && trace.sentenceStart !== undefined
-                          && trace.sentenceEnd !== undefined
-                          && Boolean(trace.foxNotes?.length)
-                          && sentence.index >= trace.sentenceStart
-                          && sentence.index <= trace.sentenceEnd)
+                        const hasUserHighlight = matchingTraces.some((trace) => trace.highlighted === true)
+                        const hasCompanionHighlight = matchingTraces.some((trace) => trace.companionHighlighted === true)
+                        const hasAnnotation = matchingTraces.some((trace) => Boolean(trace.foxNotes?.length || trace.companionNotes?.length || trace.fish))
                         return (
                           <span
-                            className={`sentence-unit ${isSelected ? 'is-selected' : ''} ${hasUserHighlight ? 'has-user-highlight' : ''} ${hasAnnotation ? 'has-annotation' : ''}`}
+                            className={`sentence-unit ${isSelected ? 'is-selected' : ''} ${hasUserHighlight ? 'has-user-highlight' : ''} ${hasCompanionHighlight ? 'has-companion-highlight' : ''} ${hasUserHighlight && hasCompanionHighlight ? 'has-shared-highlight' : ''} ${hasAnnotation ? 'has-annotation' : ''}`}
                             data-sentence-index={sentence.index}
                             key={sentence.index}
                             onClick={(event) => handleSentenceClick(event, chapterIndex, sentence.index)}
@@ -1580,7 +1677,7 @@ function App() {
         {returnPage !== null && <button className="return-slip" type="button" onClick={() => { resumeEligibleRef.current = true; setPageIndex(returnPage); setReturnPage(null); setBookmarkReminderVisible(false) }}><CornerUpLeft />回到刚才的位置</button>}
         {bookmarkReminderVisible && currentBookmark && (
           <button className="bookmark-reminder" type="button" onClick={returnToBookmark}>
-            <Bookmark />折页还在第 {currentBookmark.locator.position.chapterIndex + 1} 章 · 回去看看
+            <Bookmark />折页还在第 {currentBookmark.locator.position.chapterIndex + 1} 个阅读段落 · 回去看看
           </button>
         )}
 
@@ -1598,11 +1695,11 @@ function App() {
               style={{ '--trace-font-family': `var(--font-reading-${readerTypeface})` } as React.CSSProperties}
             >
               <blockquote>“<span className={traceLineClass(activeTrace)}>{activeTrace.quote}</span>”</blockquote>
-              {activeTrace.foxNotes?.length ? activeTrace.foxNotes.map((note) => <div className="trace-note-block" key={note.id}>
-                <div className="trace-note-meta"><b>{userLabel}</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}><SquarePen aria-hidden="true" /></button>{noteMenuTargetId === note.id && <span className="note-action-menu trace-note-menu"><button type="button" onClick={() => reviseActiveTraceNote(activeTrace, note)}>修订</button><button type="button" onClick={() => removeActiveTraceNote(note.id)}>抹去文字</button></span>}</span></div>
+              {activeTraceTimelineNotes.map((note) => <div className={`trace-note-block ${note.actor === 'companion' ? 'fish-detail' : ''}`} key={note.id}>
+                <div className="trace-note-meta"><b>{note.actor === 'user' ? userLabel : companionLabel}</b><time>{note.createdAt}</time>{note.editable && <span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}><SquarePen aria-hidden="true" /></button>{noteMenuTargetId === note.id && <span className="note-action-menu trace-note-menu"><button type="button" onClick={() => reviseActiveTraceNote(activeTrace, note)}>修订</button><button type="button" onClick={() => removeActiveTraceNote(note.id)}>抹去文字</button></span>}</span>}</div>
                 <p>{note.text}</p>
-              </div>) : <button className="empty-note" type="button" onClick={() => { setSelectedText(activeTrace.quote); setNoteTargetTraceId(activeTrace.id); setNoteTargetLocator(activeTrace.locator ?? null); setEditingNoteId(null); setNoteDraft(''); setNoteMenuTargetId(null); setActiveTrace(null); setNoteComposerOpen(true) }}>这里还没有文字。留下一道痕迹</button>}
-              {activeTrace.fish && <div className="trace-note-block fish-detail"><div className="trace-note-meta"><b>{companionLabel}</b><time>{activeTrace.fishAt}</time></div><p>{activeTrace.fish}</p></div>}
+              </div>)}
+              {!activeTrace.foxNotes?.length && <button className="empty-note" type="button" onClick={() => { setSelectedText(activeTrace.quote); setNoteTargetTraceId(activeTrace.id); setNoteTargetLocator(activeTrace.locator ?? null); setEditingNoteId(null); setNoteDraft(''); setNoteMenuTargetId(null); setActiveTrace(null); setNoteComposerOpen(true) }}>这里还没有我的文字。留下一道痕迹</button>}
             </section>
           </div>
         )}
@@ -1616,17 +1713,17 @@ function App() {
           >
             <button type="button" onClick={() => { void copySelection() }}><Copy />摘录</button>
             <button type="button" onClick={selectedRangeIsHighlighted ? cancelHighlight : saveHighlight}><Highlighter />{selectedRangeIsHighlighted ? '抹去' : '划线'}</button>
-            <button type="button" onClick={openSentenceNoteSheet}><MessageSquareText />{selectedRangeTrace?.foxNotes?.length ? '重温' : '留痕'}</button>
+            <button type="button" onClick={openSentenceNoteSheet}><MessageSquareText />{selectedRangeTrace?.foxNotes?.length || selectedRangeTrace?.companionNotes?.length || selectedRangeTrace?.fish ? '重温' : '留痕'}</button>
           </div>
         )}
 
         {noteComposerOpen && (
           <div className="note-backdrop" onClick={closeNoteSheet}>
             <section
-            className={`note-composer ${noteEntries.length ? 'has-notes' : ''}`}
+            className={`note-composer ${hasVisibleNotes ? 'has-notes' : ''}`}
               role="dialog"
               aria-modal="true"
-              aria-label={noteEntries.length ? '重温批注' : '留痕'}
+              aria-label={hasVisibleNotes ? '重温批注' : '留痕'}
               onClick={(event) => {
                 event.stopPropagation()
                 if (noteMenuTargetId) setNoteMenuTargetId(null)
@@ -1634,15 +1731,11 @@ function App() {
               style={{ '--trace-font-family': `var(--font-reading-${readerTypeface})` } as React.CSSProperties}
             >
               <div className="note-quote">“<span className={noteQuoteLineClass}>{selectedText}</span>”</div>
-              {noteEntries.map((note) => <article className="sent-note" key={note.id}>
-                <div className="sent-note-heading"><b>{userLabel}</b><time>{note.createdAt}</time><span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}><SquarePen aria-hidden="true" /></button>{noteMenuTargetId === note.id && <span className="note-action-menu"><button type="button" onClick={() => reviseNote(note)}>修订</button><button type="button" onClick={() => removeNote(note.id)}>抹去文字</button></span>}</span></div>
+              {timelineNotes.map((note) => <article className={`sent-note ${note.actor === 'companion' ? 'companion-sent-note' : ''}`} key={note.id}>
+                <div className="sent-note-heading"><b>{note.actor === 'user' ? userLabel : companionLabel}</b><time>{note.createdAt}</time>{note.editable && <span className="note-menu-anchor"><button type="button" aria-label={`批注操作 ${note.createdAt}`} onClick={() => setNoteMenuTargetId((current) => current === note.id ? null : note.id)}><SquarePen aria-hidden="true" /></button>{noteMenuTargetId === note.id && <span className="note-action-menu"><button type="button" onClick={() => reviseNote(note)}>修订</button><button type="button" onClick={() => removeNote(note.id)}>抹去文字</button></span>}</span>}</div>
                 <p>{note.text}</p>
               </article>)}
-              {noteTrace?.fish && <article className="sent-note companion-sent-note">
-                <div className="sent-note-heading"><b>{companionLabel}</b><time>{noteTrace.fishAt}</time></div>
-                <p>{noteTrace.fish}</p>
-              </article>}
-              <textarea value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Thoughts..." autoFocus={!noteEntries.length} />
+              <textarea value={noteDraft} onChange={(event) => setNoteDraft(event.target.value)} placeholder="Thoughts..." autoFocus={!hasVisibleNotes} />
               <div className="composer-actions"><button type="button" onClick={() => {
                 if (editingNoteId) {
                   setEditingNoteId(null)

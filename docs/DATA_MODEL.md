@@ -3,7 +3,7 @@
 ## IndexedDB
 
 - 数据库名：`marginalia`
-- 当前版本：`3`
+- 当前版本：`5`
 - 建库入口：`src/data/local/db.ts`
 - 同一浏览器中，不同 Origin 拥有彼此隔离的数据库。
 
@@ -20,8 +20,11 @@
 | `outbox` | `operationId` | 尚未得到云端确认的本地变化；按实体和创建时间建索引 |
 | `syncState` | `remoteUserId` | 每个云端账号最后收到的变化编号与最近成功同步时间 |
 | `profiles` | `id` | 名帖；当前使用本地稳定 ID `self`，上云时映射为登录账号 |
+| `readerProgress` | `readerId:bookId` | AI / 共读者各自独立的稳定 Locator；按读者与书籍建索引 |
+| `readerStates` | `readerId:bookId` | 理解、感受、疑问与关注线索；与共读者位置原子保存 |
+| `readerTraces` | `id` | 共读者独立留下的划线或批注；按读者、书籍和二者组合建索引 |
 
-版本 2 加入 outbox 和 syncState。版本 3 将手动折页从 `ReadingProgress` 搬入独立 bookmarks store，并将名帖迁入 profiles；升级会保留既有折页。第一次连接云端时，`prepareInitialOutbox` 会幂等扫描旧书房，只补当前没有待寄项的记录。
+版本 2 加入 outbox 和 syncState。版本 3 将手动折页从 `ReadingProgress` 搬入独立 bookmarks store，并将名帖迁入 profiles；升级会保留既有折页。版本 4 新增按 `readerId + bookId` 隔离的共读者位置与 Reader State；版本 5 加入共读者自己的划线与批注。三类共读者数据目前只在本地使用，不进入 Cloud Ink。第一次连接云端时，`prepareInitialOutbox` 会幂等扫描旧书房，只补当前没有待寄项的记录。
 
 ## 稳定位置
 
@@ -50,6 +53,8 @@
 ## 删除
 
 “移出书房”会二次确认，并级联删除 Book、EPUB 原文件、章节、阅读位置、划线、批注和页边文字。Phase 1B 没有回收站或云端恢复。
+
+共读者的 `readerProgress`、`readerStates` 与 `readerTraces` 也随书删除，避免留下无法重新打开的孤儿阅读状态。
 
 ## 不在 IndexedDB 的设置
 

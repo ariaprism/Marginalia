@@ -2,7 +2,7 @@
 
 ## 当前边界
 
-项目处于 Phase 2。React 负责界面，EPUB 仍在浏览器内解析，书籍和阅读痕迹仍以 IndexedDB 作为读取与第一写入点。Supabase 项目、登录、远端表、RLS、私有 Storage 和本地 outbox 已经建立；名帖、书目、章节、阅读位置、折页、痕迹、EPUB 与封面已完成自动双向同步，受保护的完整恢复也已接通代码并等待正式站验收。
+项目已完成 Phase 2，正在为下一阶段验证 AI Reader 最小闭环。React 负责界面，EPUB 仍在浏览器内解析，书籍和阅读痕迹仍以 IndexedDB 作为读取与第一写入点。Cloud Ink 的自动双向同步、私有文件往返和受保护整库恢复均已完成验收；新增的多读者 ReaderProgress / ReaderState 暂时只留本地，待真实阅读实验确定语义后再扩远端模型。
 
 ```text
 React feature
@@ -16,7 +16,7 @@ React feature
 
 ## 目录职责
 
-- `src/domain/`：Book、Locator、ReadingProgress、Highlight、Annotation、Marginalia；不依赖 React、DOM 或 Supabase。
+- `src/domain/`：Book、Locator、ReadingProgress、ReaderProgress、ReaderState、Highlight、Annotation、Marginalia；不依赖 React、DOM 或 Supabase。
 - `src/reader/`：EPUB 解析、章节纯文本提取、句子切分、Locator 解析和动态分页输入。
 - `src/data/local/`：IndexedDB 建库、事务、书籍与痕迹读写。
 - `src/data/sync/`：同步操作、同实体待寄替换、单次 push／pull 状态机、首次先拉后合并保护、私有文件往返、串行单飞入口、IndexedDB 写回和确定性 fake remote。
@@ -26,6 +26,7 @@ React feature
 - `src/features/import-book/`：EPUB 预解析、导入草稿、封面选择、确认入库和弹窗状态。
 - `src/features/drawer/`：书房抽屉、功能页和名帖状态。
 - `src/features/reader/`：阅读工具面板与排版偏好；分页、Locator、折页和痕迹的核心编排暂留 `App.tsx`，下一轮应作为完整控制器迁移，避免拆散相互依赖的 ref。
+- `src/features/ai-reader/`：协议无关的 `get_book` / `read` 应用服务；MCP 只作为未来适配层，不承载阅读规则。
 - `src/features/settings/`：不属于书籍数据的轻量本地界面设置。
 
 ## 关键数据流
@@ -59,7 +60,8 @@ GitHub Pages 正式站注入 Supabase URL 与 publishable key，并允许邮箱�
 
 真实同步完成后，远端层仍不得反向侵入领域对象或让阅读交互等待网络；Supabase 只负责长期保存、跨设备恢复和未来与共读者相遇。
 
-## Phase 2 尚未接通
+## AI Reader 当前边界
 
-- 自动同步的正式双浏览器与断网人工验收。
-- 受保护的完整“从云端恢复”。
+- 只读书籍概览、原书目录和连续正文窗口已经接通。
+- 独立 ReaderProgress / ReaderState 已在本地原子保存并可按 `readerId` 恢复。
+- 共读者痕迹写入与 `close_book` 应用服务已经接通；MCP 适配、界面呈现和 Cloud Ink 同步尚未接通。

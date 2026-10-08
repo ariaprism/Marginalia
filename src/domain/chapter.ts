@@ -7,6 +7,8 @@ export type Chapter = {
   /** spine 中的顺序，从 0 开始。 */
   index: number
   title: string
+  /** 是否是原书目录中的导航项；spine 前置页仍保留，但不冒充章节。 */
+  inToc?: boolean
   /** EPUB 内 href，例如 "text/chapter1.xhtml"。 */
   href: string
   /** 章节原始 XHTML，可选；不依赖网络时直接渲染。 */

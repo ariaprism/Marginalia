@@ -3,6 +3,7 @@ import { sampleChapters } from '../../reader/bookContent'
 import { locatorFromSentenceRange, segmentChapters } from '../../reader/sentenceAnchor'
 import { getAnnotations } from './bookStore'
 import { openMarginaliaDB } from './db'
+import { saveReaderTrace } from './readerStore'
 import {
   loadTraces,
   passageKey,
@@ -36,7 +37,7 @@ function read() {
 
 async function clearStores() {
   const db = await openMarginaliaDB()
-  const names = ['highlights', 'annotations', 'marginalia']
+  const names = ['highlights', 'annotations', 'marginalia', 'readerTraces']
   await Promise.all(names.map((name) => new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(name, 'readwrite')
     transaction.objectStore(name).clear()
@@ -129,6 +130,29 @@ describe('traceStore', () => {
     expect(traces[0].foxNotes?.map((note) => note.text)).toEqual(['改过的第一条', '第二条'])
     expect(edited?.createdAt).toBe(originalCreatedAt)
     expect(edited?.updatedAt).not.toBe(originalCreatedAt)
+  })
+
+  it('merges the local MCP companion trace into the same book-page view', async () => {
+    const { locator } = anchor(0, 1)
+    await saveReaderTrace({
+      id: 'reader-trace-xiaog',
+      readerId: 'xiaog',
+      bookId: BOOK_ID,
+      kind: 'annotation',
+      locator,
+      text: '小G在这里停了一会。',
+      createdAt: '2026-10-02T07:20:43.937Z',
+    })
+
+    const traces = await read()
+
+    expect(traces).toHaveLength(1)
+    expect(traces[0].companionNotes?.[0]).toMatchObject({
+      id: 'reader-trace-xiaog',
+      text: '小G在这里停了一会。',
+    })
+    expect(traces[0].companionNotes?.[0].createdAt).toMatch(/\d\d\/\d\d\/\d\d：\d\d/)
+    expect(traces[0].drifted).toBe(false)
   })
 
   it('removes a single note without touching the rest of the trace', async () => {

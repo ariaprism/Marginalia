@@ -182,6 +182,28 @@ describe('epubParser · 现实世界 EPUB 变体', () => {
     const epub = await parseEpub(bytes)
     // 按 spine 顺序排列，但标题来自各自对应的目录条目
     expect(epub.chapters.map((chapter) => chapter.title)).toEqual(['甲章', '乙章'])
+    expect(epub.chapters.map((chapter) => chapter.inToc)).toEqual([true, true])
+  })
+
+  it('保留 spine 前置页供连续阅读，但不把它们冒充原书目录章节', async () => {
+    const bytes = await buildEpub({
+      'OEBPS/content.opf': `<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">urn:test:frontmatter</dc:identifier><dc:title>有前置页的书</dc:title><dc:language>zh</dc:language></metadata>
+  <manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="title" href="title.xhtml" media-type="application/xhtml+xml"/><item id="copyright" href="copyright.xhtml" media-type="application/xhtml+xml"/><item id="body" href="body.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="title"/><itemref idref="copyright"/><itemref idref="body"/></spine>
+</package>`,
+      'OEBPS/nav.xhtml': `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="body.xhtml">素食者</a></li></ol></nav></body></html>`,
+      'OEBPS/title.xhtml': chapterXhtml('书名页', '<p>有前置页的书</p>'),
+      'OEBPS/copyright.xhtml': chapterXhtml('版权页', '<p>版权所有</p>'),
+      'OEBPS/body.xhtml': chapterXhtml('文件内标题', '<p>正文。</p>'),
+    })
+
+    const epub = await parseEpub(bytes)
+    expect(epub.chapters).toHaveLength(3)
+    expect(epub.chapters.map((chapter) => chapter.inToc)).toEqual([false, false, true])
+    expect(epub.chapters[2].title).toBe('素食者')
+    expect(epub.chapters[0].html).toContain('marginalia:spine-only')
   })
 
   it('跳过 spine 中非正文的 media-type，且缺失文件不致命', async () => {

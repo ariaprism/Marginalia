@@ -12,6 +12,11 @@ import { runCloudSync } from '../../data/sync/cloudSync'
 import { restoreCloudLibrary } from '../../data/sync/cloudRestore'
 import { CLOUD_SYNC_FINISHED_EVENT } from '../../data/sync/syncSignals'
 import { cloudConnectionEnabled } from './config'
+import {
+  claimCloudAccount,
+  inspectCloudAccountAccess,
+  type CloudAccountAccess,
+} from './cloudAccountGuard'
 
 type CloudRoomState =
   | { kind: 'local'; pending: number }
@@ -41,6 +46,7 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
   const [lastSyncedAt, setLastSyncedAt] = useState<string>()
   const [pendingSummary, setPendingSummary] = useState(EMPTY_PENDING)
   const [state, setState] = useState<CloudRoomState>({ kind: enabled ? 'loading' : 'local', pending: 0 })
+  const [accountAccess, setAccountAccess] = useState<CloudAccountAccess>()
   const signedInUserId = state.kind === 'signed-in' ? state.session.user.id : undefined
 
   useEffect(() => {
@@ -79,6 +85,17 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
   useEffect(() => {
     if (!signedInUserId) return
     let active = true
+    void inspectCloudAccountAccess(signedInUserId).then((access) => {
+      if (active) setAccountAccess(access)
+    }).catch(() => {
+      if (active) setAccountAccess({ kind: 'unclaimed' })
+    })
+    return () => { active = false }
+  }, [signedInUserId])
+
+  useEffect(() => {
+    if (!signedInUserId || accountAccess?.kind !== 'allowed') return
+    let active = true
     const refreshCloudStatus = async () => {
       await compactOutbox()
       const [pending, syncState] = await Promise.all([
@@ -99,7 +116,7 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
       active = false
       window.removeEventListener(CLOUD_SYNC_FINISHED_EVENT, refreshAfterAutomaticSync)
     }
-  }, [signedInUserId])
+  }, [accountAccess?.kind, signedInUserId])
 
   const requestMagicLink = async (event: FormEvent) => {
     event.preventDefault()
@@ -118,11 +135,12 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
 
   const signOut = async () => {
     if (!client) return
-    await client.auth.signOut()
+    await client.auth.signOut({ scope: 'local' })
   }
 
   const syncStructuredContent = async () => {
-    if (!client || state.kind !== 'signed-in') return
+    if (!client || state.kind !== 'signed-in' || accountAccess?.kind !== 'allowed'
+      || accountAccess.ownerId !== state.session.user.id) return
     setSyncing(true)
     setSyncNotice(undefined)
     try {
@@ -148,7 +166,8 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
   }
 
   const restoreFromCloud = async () => {
-    if (!client || state.kind !== 'signed-in') return
+    if (!client || state.kind !== 'signed-in' || accountAccess?.kind !== 'allowed'
+      || accountAccess.ownerId !== state.session.user.id) return
     const confirmed = window.confirm(
       '要用云端书房重建这台设备吗？\n\n小G会先寄出本机尚未收好的内容，再完整检查云端书目、正文、痕迹和 EPUB。全部取齐后才会替换本机书房；阅读排版等本机偏好会保留。',
     )
@@ -177,10 +196,17 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
 
   const localOnly = state.kind === 'local'
   const signedIn = state.kind === 'signed-in'
+  const accountBlocked = signedIn && (accountAccess?.kind === 'blocked'
+    || (accountAccess?.kind === 'allowed' && accountAccess.ownerId !== signedInUserId))
+  const accountUnclaimed = signedIn && accountAccess?.kind === 'unclaimed'
+  const cloudActionsAllowed = signedIn && accountAccess?.kind === 'allowed'
+    && accountAccess.ownerId === signedInUserId
   const statusText = localOnly
     ? '这处施工书房只留在当前浏览器'
     : state.kind === 'loading'
       ? '正在辨认云端门帖…'
+      : accountBlocked
+        ? '门帖与这间浏览器书房不一致，云端往返已暂停'
       : signedIn
         ? '云端门帖已认出，书页与痕迹可以收好'
         : '尚未登录云端书房'
@@ -222,6 +248,19 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
         {state.kind === 'signed-out' && state.notice && <p className="cloud-room-notice" role="status">{state.notice}</p>}
         {state.kind === 'error' && <p className="cloud-room-notice is-error" role="alert">{state.message}</p>}
         {signedIn && <div className="cloud-identity"><div><small>当前门帖</small><strong>{state.session.user.email ?? '已登录的私人账号'}</strong></div><button type="button" onClick={() => { void signOut() }}><LogOut />退出</button></div>}
+        {accountBlocked && <div className="cloud-room-notice is-error" role="alert">
+          <strong>这张门帖不属于当前浏览器书房。</strong>
+          <span>为了避免把原书房寄进另一个账号，自动同步、立即收好与云端恢复已经暂停。请退出，并在全新浏览器或独立浏览器配置文件中登录这张门帖。</span>
+        </div>}
+        {accountUnclaimed && <div className="cloud-room-notice" role="alert">
+          <strong>这间旧书房还没有认领云端门帖。</strong>
+          <span>确认这是它第一次连接的账号后再绑定；绑定后不能在同一浏览器内直接换成另一张门帖。</span>
+          <button type="button" onClick={() => {
+            if (state.kind !== 'signed-in') return
+            claimCloudAccount(state.session.user.id)
+            setAccountAccess({ kind: 'allowed', ownerId: state.session.user.id })
+          }}>确认绑定当前门帖</button>
+        </div>}
 
         <div className="cloud-sync-summary">
           <div><small>待收内容</small><strong>{pendingHeadline}</strong></div>
@@ -230,8 +269,8 @@ export function CloudRoom({ onLocalContentChanged }: { onLocalContentChanged?: (
         {pendingDetails && <p className="cloud-pending-details">{pendingDetails}</p>}
 
         <div className="cloud-actions">
-          <button type="button" disabled={!signedIn || syncing || restoring} onClick={() => { void syncStructuredContent() }} title="同步名帖、书目、正文、阅读状态、痕迹与私有原书"><RefreshCw /><span>{syncing ? '正在收好…' : '立即收好'}<small>手动检查整间书房</small></span></button>
-          <button type="button" disabled={!signedIn || syncing || restoring} onClick={() => { void restoreFromCloud() }} title="用已完整收好的云端内容重建这台设备"><RotateCcw /><span>{restoring ? '正在恢复…' : '从云端恢复'}<small>重建这台设备的书房</small></span></button>
+          <button type="button" disabled={!cloudActionsAllowed || syncing || restoring} onClick={() => { void syncStructuredContent() }} title="同步名帖、书目、正文、阅读状态、痕迹与私有原书"><RefreshCw /><span>{syncing ? '正在收好…' : '立即收好'}<small>手动检查整间书房</small></span></button>
+          <button type="button" disabled={!cloudActionsAllowed || syncing || restoring} onClick={() => { void restoreFromCloud() }} title="用已完整收好的云端内容重建这台设备"><RotateCcw /><span>{restoring ? '正在恢复…' : '从云端恢复'}<small>重建这台设备的书房</small></span></button>
         </div>
         {syncNotice && <p className="cloud-room-notice" role="status">{syncNotice}</p>}
         <p className="cloud-room-footnote">日常写入会自动收好，“立即收好”是手动兜底。“从云端恢复”只在重装或本机数据损坏时使用，并会先确认云端内容完整。</p>
