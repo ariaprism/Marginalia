@@ -6,6 +6,7 @@ import type { Locator } from '../../domain/locator'
 import type { Marginalia, Visibility } from '../../domain/marginalia'
 import type { CompanionPronoun } from '../../domain/profile'
 import type { ReadingProgress } from '../../domain/readingProgress'
+import type { ReaderProgress, ReaderState, ReaderTrace } from '../../domain/reader'
 import { extractChapterText } from '../../reader/chapterText'
 import { isSpineOnlyChapterHtml } from '../../reader/epubParser'
 import type { StoredChapter } from '../local/bookStore'
@@ -23,10 +24,14 @@ type BookmarkRow = Tables<'bookmarks'>
 type HighlightRow = Tables<'highlights'>
 type AnnotationRow = Tables<'annotations'>
 type MarginaliaRow = Tables<'marginalia'>
+type ReaderProgressRow = { owner_id: string; reader_id: string; book_id: string; cursor: string | null; locator: Json; updated_at: string; deleted_at?: null }
+type ReaderStateRow = { owner_id: string; reader_id: string; book_id: string; understanding: string; feeling: string; questions: Json; attention: Json; updated_at: string; deleted_at?: null }
+type ReaderTraceRow = { id: string; owner_id: string; reader_id: string; book_id: string; kind: string; locator: Json; text: string | null; session_id: string; created_at: string; updated_at: string; deleted_at: string | null }
 
 const STRUCTURED_TYPES: SyncEntityType[] = [
   'profile', 'book', 'chapter', 'readingProgress', 'bookmark',
   'highlight', 'annotation', 'marginalia',
+  'readerProgress', 'readerState', 'readerTrace',
 ]
 
 export interface CloudInkGateway {
@@ -40,6 +45,9 @@ export interface CloudInkGateway {
   getHighlights(ids: string[]): Promise<HighlightRow[]>
   getAnnotations(ids: string[]): Promise<AnnotationRow[]>
   getMarginalia(ids: string[]): Promise<MarginaliaRow[]>
+  getReaderProgress(): Promise<ReaderProgressRow[]>
+  getReaderStates(): Promise<ReaderStateRow[]>
+  getReaderTraces(ids: string[]): Promise<ReaderTraceRow[]>
 }
 
 function expectData<T>(data: T | null, error: { message: string } | null): T {
@@ -60,6 +68,11 @@ function payloadForRemote(operation: SyncOperation): Json {
 
 /** Browser gateway: supabase-js attaches the session JWT and every query remains subject to RLS. */
 export function createSupabaseCloudInkGateway(client: SupabaseClient<Database>): CloudInkGateway {
+  const readerClient = client as unknown as SupabaseClient
+  const readReaderTable = async <T>(table: 'reader_progress' | 'reader_states'): Promise<T[]> => {
+    const { data, error } = await readerClient.from(table).select('*')
+    return expectData(data, error) as T[]
+  }
   const byIds = async <T>(
     table: 'books' | 'book_sections' | 'highlights' | 'annotations' | 'marginalia',
     ids: string[],
@@ -107,6 +120,13 @@ export function createSupabaseCloudInkGateway(client: SupabaseClient<Database>):
     getHighlights: (ids) => byIds<HighlightRow>('highlights', ids),
     getAnnotations: (ids) => byIds<AnnotationRow>('annotations', ids),
     getMarginalia: (ids) => byIds<MarginaliaRow>('marginalia', ids),
+    getReaderProgress: () => readReaderTable<ReaderProgressRow>('reader_progress'),
+    getReaderStates: () => readReaderTable<ReaderStateRow>('reader_states'),
+    async getReaderTraces(ids) {
+      if (!ids.length) return []
+      const { data, error } = await readerClient.from('reader_traces').select('*').in('id', ids)
+      return expectData(data, error) as ReaderTraceRow[]
+    },
   }
 }
 
@@ -171,6 +191,36 @@ export function annotationPayload(row: AnnotationRow): Annotation {
   }
 }
 
+export function readerProgressPayload(row: ReaderProgressRow): ReaderProgress {
+  return {
+    readerId: row.reader_id, bookId: row.book_id,
+    locator: row.locator as unknown as Locator,
+    ...(row.cursor ? { cursor: row.cursor } : {}), updatedAt: row.updated_at,
+  }
+}
+
+function stringList(value: Json): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+export function readerStatePayload(row: ReaderStateRow): ReaderState {
+  return {
+    readerId: row.reader_id, bookId: row.book_id,
+    understanding: row.understanding, feeling: row.feeling,
+    questions: stringList(row.questions), attention: stringList(row.attention),
+    updatedAt: row.updated_at,
+  }
+}
+
+export function readerTracePayload(row: ReaderTraceRow): ReaderTrace {
+  return {
+    id: row.id, readerId: row.reader_id, bookId: row.book_id,
+    kind: row.kind === 'annotation' ? 'annotation' : 'highlight',
+    locator: row.locator as unknown as Locator,
+    ...(row.text ? { text: row.text } : {}), createdAt: row.created_at,
+  }
+}
+
 export function marginaliaPayload(row: MarginaliaRow): Marginalia {
   return {
     id: row.id, bookId: row.book_id, annotationId: row.annotation_id ?? '',
@@ -190,6 +240,7 @@ function isDeleted(row: { deleted_at?: string | null } | undefined): boolean {
 const PUSH_ORDER: Record<SyncEntityType, number> = {
   profile: 0, book: 1, chapter: 2, readingProgress: 3, bookmark: 4,
   highlight: 5, annotation: 6, marginalia: 7, epubFile: 8,
+  readerProgress: 9, readerState: 10, readerTrace: 11,
 }
 
 /** Structured Cloud Ink remote. EPUB bytes deliberately remain a separate Storage stage. */
@@ -207,6 +258,7 @@ export class CloudInkRemote implements SyncRemote {
       const supported = operation.entityType !== 'epubFile'
         && operation.operation !== 'upload_file'
         && !(operation.entityType === 'profile' && operation.operation === 'delete')
+        && !operation.entityType.startsWith('reader')
       accepted.set(operation.operationId, supported ? await this.gateway.apply(operation) : false)
     }
     return operations.map((operation) => ({
@@ -223,12 +275,16 @@ export class CloudInkRemote implements SyncRemote {
     const grouped = (type: SyncEntityType) => [...latest.values()].filter((row) => row.entity_type === type)
     const ids = (type: SyncEntityType) => grouped(type).map((row) => row.entity_id)
 
-    const [profile, books, chapters, positions, bookmarks, highlights, annotations, marginalia] = await Promise.all([
+    const [profile, books, chapters, positions, bookmarks, highlights, annotations, marginalia,
+      readerProgress, readerStates, readerTraces] = await Promise.all([
       grouped('profile').length ? this.gateway.getProfile() : Promise.resolve(null),
       this.gateway.getBooks(ids('book')), this.gateway.getChapters(ids('chapter')),
       this.gateway.getReadingPositions(ids('readingProgress')), this.gateway.getBookmarks(ids('bookmark')),
       this.gateway.getHighlights(ids('highlight')), this.gateway.getAnnotations(ids('annotation')),
       this.gateway.getMarginalia(ids('marginalia')),
+      grouped('readerProgress').length ? this.gateway.getReaderProgress() : Promise.resolve([]),
+      grouped('readerState').length ? this.gateway.getReaderStates() : Promise.resolve([]),
+      this.gateway.getReaderTraces(ids('readerTrace')),
     ])
     const maps = {
       book: new Map(books.map((row) => [row.id, row])),
@@ -238,11 +294,16 @@ export class CloudInkRemote implements SyncRemote {
       highlight: new Map(highlights.map((row) => [row.id, row])),
       annotation: new Map(annotations.map((row) => [row.id, row])),
       marginalia: new Map(marginalia.map((row) => [row.id, row])),
+      readerProgress: new Map(readerProgress.map((row) => [`${row.reader_id}:${row.book_id}`, row])),
+      readerState: new Map(readerStates.map((row) => [`${row.reader_id}:${row.book_id}`, row])),
+      readerTrace: new Map(readerTraces.map((row) => [row.id, row])),
     }
     const payloadMappers = {
       book: bookPayload, chapter: chapterPayload, readingProgress: readingPayload,
       bookmark: bookmarkPayload, highlight: highlightPayload,
       annotation: annotationPayload, marginalia: marginaliaPayload,
+      readerProgress: readerProgressPayload, readerState: readerStatePayload,
+      readerTrace: readerTracePayload,
     }
     const changes: RemoteChange[] = []
     const profileChange = grouped('profile').at(-1)
