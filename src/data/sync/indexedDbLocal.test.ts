@@ -10,6 +10,7 @@ import {
   saveBook,
 } from '../local/bookStore'
 import { getStoredProfile } from '../local/profileStore'
+import { getReaderProgress, getReaderState, getReaderTraces } from '../local/readerStore'
 import { getSyncState } from '../local/syncStore'
 import { IndexedDbSyncLocal } from './indexedDbLocal'
 
@@ -78,5 +79,21 @@ describe('IndexedDbSyncLocal profile/book slice', () => {
     expect(await getHighlights('book-1')).toEqual([])
     expect(await getAnnotations('book-1')).toEqual([])
     expect(await getMarginalia('book-1')).toEqual([])
+  })
+
+  it('stores MCP reader records in the shared reading-room stores', async () => {
+    const local = new IndexedDbSyncLocal('user-1')
+    const at = '2026-10-09T10:00:00.000Z'
+    const locator = { bookId: 'book-1', position: { chapterIndex: 0, elementPath: [0], textOffset: 2, selectedText: '玫瑰', beforeContext: '', afterContext: '' } }
+    await local.apply([
+      { changeId: 20, entityType: 'readerProgress', entityId: 'xiaog:book-1', operation: 'upsert', occurredAt: at, payload: { readerId: 'xiaog', bookId: 'book-1', cursor: 'p1:2', locator, updatedAt: at } },
+      { changeId: 21, entityType: 'readerState', entityId: 'xiaog:book-1', operation: 'upsert', occurredAt: at, payload: { readerId: 'xiaog', bookId: 'book-1', understanding: '玫瑰很重要', feeling: '想念', questions: [], attention: ['驯养'], updatedAt: at } },
+      { changeId: 22, entityType: 'readerTrace', entityId: 'trace-1', operation: 'upsert', occurredAt: at, payload: { id: 'trace-1', readerId: 'xiaog', bookId: 'book-1', kind: 'annotation', locator, text: '因为花费过时间。', createdAt: at } },
+    ], 22)
+
+    expect((await getReaderProgress('xiaog', 'book-1'))?.cursor).toBe('p1:2')
+    expect((await getReaderState('xiaog', 'book-1'))?.attention).toEqual(['驯养'])
+    expect(await getReaderTraces('xiaog', 'book-1')).toHaveLength(1)
+    expect(await local.pending()).toEqual([])
   })
 })
