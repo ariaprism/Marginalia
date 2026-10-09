@@ -3,6 +3,7 @@ import type { Annotation } from '../../domain/annotation'
 import type { Highlight } from '../../domain/highlight'
 import type { Marginalia } from '../../domain/marginalia'
 import type { ReadingProgress } from '../../domain/readingProgress'
+import type { ReaderProgress, ReaderState, ReaderTrace } from '../../domain/reader'
 import type { StoredChapter } from '../local/bookStore'
 import type { StoredProfile } from '../local/profileStore'
 import { openMarginaliaDB } from '../local/db'
@@ -61,7 +62,8 @@ export class IndexedDbSyncLocal implements SyncLocal {
     const db = await openMarginaliaDB()
     const stores = [
       'profiles', 'books', 'epubFiles', 'chapters', 'readingProgress', 'bookmarks',
-      'highlights', 'annotations', 'marginalia', 'outbox', 'syncState',
+      'highlights', 'annotations', 'marginalia', 'readerProgress', 'readerStates',
+      'readerTraces', 'outbox', 'syncState',
     ]
     await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction(stores, 'readwrite')
@@ -131,6 +133,30 @@ export class IndexedDbSyncLocal implements SyncLocal {
             const store = transaction.objectStore('marginalia')
             if (change.operation === 'delete') store.delete(change.entityId)
             else if (change.payload) store.put(change.payload as Marginalia)
+          }
+          if (change.entityType === 'readerProgress') {
+            const store = transaction.objectStore('readerProgress')
+            if (change.operation === 'delete') store.delete(change.entityId)
+            else if (change.payload) {
+              const value = change.payload as ReaderProgress
+              store.put({ ...value, id: `${value.readerId}:${value.bookId}` })
+            }
+          }
+          if (change.entityType === 'readerState') {
+            const store = transaction.objectStore('readerStates')
+            if (change.operation === 'delete') store.delete(change.entityId)
+            else if (change.payload) {
+              const value = change.payload as ReaderState
+              store.put({ ...value, id: `${value.readerId}:${value.bookId}` })
+            }
+          }
+          if (change.entityType === 'readerTrace') {
+            const store = transaction.objectStore('readerTraces')
+            if (change.operation === 'delete') store.delete(change.entityId)
+            else if (change.payload) {
+              const value = change.payload as ReaderTrace
+              store.put({ ...value, readerBookId: `${value.readerId}:${value.bookId}` })
+            }
           }
         }
       }
