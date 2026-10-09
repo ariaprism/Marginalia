@@ -10,6 +10,9 @@ export type SyncEntityType =
   | 'highlight'
   | 'annotation'
   | 'marginalia'
+  | 'readerProgress'
+  | 'readerState'
+  | 'readerTrace'
 
 export type SyncOperationKind = 'upsert' | 'delete' | 'upload_file'
 
