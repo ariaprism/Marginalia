@@ -13,6 +13,26 @@ const gateway = (): CloudInkGateway => ({
   getHighlights: vi.fn(async () => []),
   getAnnotations: vi.fn(async () => []),
   getMarginalia: vi.fn(async () => []),
+  getReaderProgress: vi.fn(async () => []),
+  getReaderStates: vi.fn(async () => []),
+  getReaderTraces: vi.fn(async () => []),
+
+  it('pulls MCP reader checkpoints and traces as read-only local records', async () => {
+    const api = gateway()
+    const locator = { bookId: 'book-1', position: { chapterIndex: 0, elementPath: [0], textOffset: 2, selectedText: '玫瑰', beforeContext: '', afterContext: '' } }
+    vi.mocked(api.listChanges).mockResolvedValue([
+      { change_id: 20, changed_at: '2026-10-09T10:00:00.000Z', entity_id: 'xiaog:book-1', entity_type: 'readerProgress', operation: 'upsert', owner_id: 'user-1' },
+      { change_id: 21, changed_at: '2026-10-09T10:01:00.000Z', entity_id: 'xiaog:book-1', entity_type: 'readerState', operation: 'upsert', owner_id: 'user-1' },
+      { change_id: 22, changed_at: '2026-10-09T10:02:00.000Z', entity_id: 'trace-1', entity_type: 'readerTrace', operation: 'upsert', owner_id: 'user-1' },
+    ])
+    vi.mocked(api.getReaderProgress).mockResolvedValue([{ owner_id: 'user-1', reader_id: 'xiaog', book_id: 'book-1', cursor: 'p1:2', locator, updated_at: '2026-10-09T10:00:00.000Z' }])
+    vi.mocked(api.getReaderStates).mockResolvedValue([{ owner_id: 'user-1', reader_id: 'xiaog', book_id: 'book-1', understanding: '玫瑰很重要', feeling: '想念', questions: ['她是谁'], attention: ['驯养'], updated_at: '2026-10-09T10:01:00.000Z' }])
+    vi.mocked(api.getReaderTraces).mockResolvedValue([{ id: 'trace-1', owner_id: 'user-1', reader_id: 'xiaog', book_id: 'book-1', kind: 'annotation', locator, text: '因为花费过时间。', session_id: 'session-1', created_at: '2026-10-09T10:02:00.000Z', updated_at: '2026-10-09T10:02:00.000Z', deleted_at: null }])
+
+    const result = await new CloudInkRemote(api).pull(19)
+    expect(result.changes.map((change) => change.entityType)).toEqual(['readerProgress', 'readerState', 'readerTrace'])
+    expect(result.changes[2].payload).toMatchObject({ readerId: 'xiaog', kind: 'annotation', text: '因为花费过时间。' })
+  })
 })
 
 describe('CloudInkRemote structured sync', () => {
