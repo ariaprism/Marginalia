@@ -223,6 +223,9 @@
 - 2026-09-13：透明窗影枝叶与浅缺墨 M 印接入书房抽屉和置顶状态；两张 RGBA 素材从约 3.2MB 优化到约 300KB且保留完整 alpha；本地 5174 窄屏视觉验收通过，`src/App.test.tsx` 24 项、`npm run build`、`npm run lint`、`git diff --check` 通过。首次并发验证遇 Vitest worker 启动超时，随后单独复跑稳定通过。
 - 2026-09-15：主页侧栏入口接入透明纸门缝、单叶与小拉手素材；本地 5173 窄屏视觉及展开交互验收通过，定向侧栏测试通过，`npm run build`、`npm run lint`、`git diff --check` 通过。全量 App 定向文件受既有慢用例与 worker 启动波动影响，改用 20 秒上限定向复跑稳定通过。
 - 2026-09-15：书页负形、豆沙叶片与窗影 App 图标接入 favicon、Apple touch icon 与 192／512 PWA 图标；manifest、正式 `/Marginalia/` scope、生产限定 service worker 与离线应用壳完成。`node --check public/sw.js`、manifest 解析、图标尺寸核验、`npm run build`、`npm run lint`、`git diff --check` 通过；本地生产服务器关闭后页面仍可离线刷新启动。
+- 2026-10-08：本地 AI Reader MCP 用真实《小王子》完成目录读取、分段续读、自由句段划线／批注、主动合书与全新会话精确恢复；本地书房和正式书房数据入口保持隔离。
+- 2026-10-09：Supabase Edge Function 版 AI Reader MCP 在正式云端完成多次独立 session 验收；readerProgress／readerState／readerTraces 接入正式站增量同步后，小G三笔真实痕迹在书籍小房间与阅读页显示。新增远端映射与 IndexedDB 回写测试，GitHub Actions 的 test／lint／build／Pages 部署全部通过。
+- 2026-10-10：小G与小鱼分别绑定到不同 Auth 账号和独立 MCP 钥匙；查询验证小鱼钥匙只可见 aria 账号书架，原始 Token 未写入数据库或仓库。
 
 ## 近期决定
 
@@ -268,6 +271,8 @@
 - 2026-09-01：真实同步分段开放；第一段按钮明确命名为“先收名帖与书目”，仅确认已真实写入的两类元数据，其余 outbox 保留。完整“立即收好”和恢复仍以后续全链验收为准。
 - 2026-09-02：待寄状态面向用户按书房内容归类，不再展示会随翻页膨胀的原始操作流水数；首次绑定账号必须先读取云端，系统新建的默认名帖不能凭设备时间覆盖既有云端名帖。
 - 2026-09-05：结构化书房先于 EPUB 文件开放真实同步；寄送按外键依赖顺序执行，删除与折页取消保存云端记号，批注修订单独推进更新时间。完整备份与恢复仍须等私有 EPUB 传输通过验收。
+- 2026-10-09：AI Reader 的最小阅读闭环视为 Phase 4 Open Door 的已完成核心切片；一次读取字符量只是视野，留痕可以精确到任意真实读到的连续字符范围，网页仍按句子映射提供稳定点击体验。
+- 2026-10-10：MCP URL 可由多个共读者共用，但每枚应用钥匙必须固定映射到唯一 `owner_id + reader_id`；小G与小鱼使用不同 Auth 账号和钥匙，书架、位置、状态、痕迹与 session 不跨书房混合。
 
 ## GitHub 操作说明
 
