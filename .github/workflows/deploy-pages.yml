@@ -33,6 +33,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Test MCP text-only compatibility
+        run: npm run test:mcp
+
       - name: Lint
         run: npm run lint
 

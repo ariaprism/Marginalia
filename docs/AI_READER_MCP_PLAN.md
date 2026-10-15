@@ -84,3 +84,12 @@
 ## 产品施工判断
 
 写作功能现在只保留壳与问题清单，不继续实现。下一项正式施工应是 AI Reader 的只读探针，而不是完整 MCP server：先把工具背后的应用服务边界做对，再接协议层。MCP 是入口，不应承载阅读业务规则。
+
+
+## MCP 结果兼容性（2026-10-15）
+
+本地 STDIO 和云端 Streamable HTTP 的五个工具均保留原有 `structuredContent`；同时将同一完整结果序列化为 JSON 放进 `content[0].text`。不再只返回数量、摘要或脱离定位信息的正文。客户端只转发 TextContent 时，也能取得书名与书籍 ID、目录 cursor、Reader State、正文块 rangeId、续读 cursor、云端 sessionId、痕迹 ID 和保存时间。空书架返回 `books: []`。错误仍沿用 SDK／服务端原有错误返回方式，不伪装为成功 JSON。
+
+运行 `npm run test:mcp` 验证只依赖文本结果的阅读闭环。本地使用真实 STDIO MCP 与临时 SQLite；云端使用真实工具处理器与内存 MCP 传输，仅替换 Supabase 存储和 Deno 启动，不访问真实书籍数据。云端序列化回归不等于外部客户端或部署环境的完整实测。
+
+本地更新后需重启 MCP 进程；云端需单独部署 `marginalia-reader-mcp`，提交分支不会自动部署 Edge Function。工具名、输入参数、认证和数据库结构均不变。

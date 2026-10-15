@@ -25,7 +25,7 @@ server.registerTool('list_books', {
     structuredContent: { books },
     content: [{
       type: 'text',
-      text: books.length ? '书架上有 ' + books.length + ' 本书。' : '本地书房还是空的。',
+      text: JSON.stringify({ books }),
     }],
   }
 })
@@ -39,7 +39,7 @@ server.registerTool('get_book', {
   const result = getBook(db, bookId, readerId)
   return {
     structuredContent: result,
-    content: [{ type: 'text', text: '《' + result.book.title + '》共有 ' + result.chapters.length + ' 个目录项。' }],
+    content: [{ type: 'text', text: JSON.stringify(result) }],
   }
 })
 
@@ -57,7 +57,7 @@ server.registerTool('read', {
   const result = readBook(db, bookId, readerId, cursor, length)
   return {
     structuredContent: result,
-    content: [{ type: 'text', text: result.blocks.map((block) => block.text).join('\n\n') }],
+    content: [{ type: 'text', text: JSON.stringify(result) }],
   }
 })
 
@@ -77,7 +77,7 @@ server.registerTool('leave_trace', {
   const trace = leaveTrace(db, input)
   return {
     structuredContent: { trace },
-    content: [{ type: 'text', text: trace.kind === 'annotation' ? '批注已经留在书页上。' : '这句话已经划下来了。' }],
+    content: [{ type: 'text', text: JSON.stringify({ trace }) }],
   }
 })
 
@@ -100,7 +100,7 @@ server.registerTool('close_book', {
   const result = closeBook(db, input)
   return {
     structuredContent: result,
-    content: [{ type: 'text', text: '已经合上书，下次会从这里继续。' }],
+    content: [{ type: 'text', text: JSON.stringify(result) }],
   }
 })
 
