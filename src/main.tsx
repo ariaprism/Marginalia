@@ -3,8 +3,19 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { hydrateSharedLibrary, watchSharedLibrary } from './data/local/sharedLibrary'
+import { OAuthConsent } from './features/cloud/OAuthConsent'
+import { oauthConsentRequest } from './features/cloud/oauthConsentRoute'
 
 async function start() {
+  const consentRequest = oauthConsentRequest()
+  if (consentRequest) {
+    createRoot(document.getElementById('root')!).render(
+      <StrictMode>
+        <OAuthConsent authorizationId={consentRequest.authorizationId} />
+      </StrictMode>,
+    )
+    return
+  }
   try {
     await hydrateSharedLibrary()
   } catch (error) {
