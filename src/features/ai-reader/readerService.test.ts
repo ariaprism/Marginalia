@@ -1,3 +1,4 @@
+import { withTransaction } from '../../data/local/db'
 import { describe, expect, it } from 'vitest'
 import { saveBook, saveChapters } from '../../data/local/bookStore'
 import { getReaderTraces, saveReaderSession } from '../../data/local/readerStore'
@@ -9,6 +10,7 @@ import {
   getBookOverview,
   leaveReaderTrace,
   readBookWindow,
+  randomReaderAnnotations,
 } from './readerService'
 
 async function seedBook() {
@@ -42,7 +44,7 @@ describe('AI Reader 只读应用服务', () => {
     expect(overview.book.title).toBe('散步测试')
     expect(overview.toc.map((item) => item.title)).toEqual(['雨从窗外来', '灯亮起来'])
     expect(overview.toc[0].cursor).toMatch(/^p1:1:/)
-    expect(overview.reader).toEqual({ readerId: 'xiaoyu', position: null, state: null })
+    expect(overview.reader).toMatchObject({ readerId: 'xiaoyu', position: null, state: null })
   })
 
   it('read 默认从第一个目录正文开始，返回可续读 cursor 与稳定 rangeId', async () => {
@@ -90,7 +92,7 @@ describe('AI Reader 只读应用服务', () => {
     const foxOverview = await getBookOverview(book.id, 'aria')
     expect(fishOverview.reader.position?.cursor).toBe('p1:2:1:0')
     expect(fishOverview.reader.state?.attention).toEqual(['灯'])
-    expect(foxOverview.reader).toEqual({ readerId: 'aria', position: null, state: null })
+    expect(foxOverview.reader).toMatchObject({ readerId: 'aria', position: null, state: null })
 
     const resumed = await readBookWindow(book.id, { readerId: 'xiaoyu', length: 200 })
     expect(resumed.blocks[0]).toMatchObject({ chapterIndex: 2, text: '第三段正文。' })
@@ -185,4 +187,22 @@ describe('AI Reader 只读应用服务', () => {
       quote: '第三段正文。', kind: 'highlight',
     })).rejects.toThrow('不在刚才读到的范围里')
   })
+  it('中断后保留主位置、旧状态锚点和补读范围；翻批注不改变主位置', async () => {
+    const book = await seedBook()
+    const locator = createLocator(book.id, { chapterIndex:1,elementPath:[1],textOffset:0,selectedText:'第一段正文。',beforeContext:'',afterContext:'' })
+    await withTransaction('annotations','readwrite',store=>store.put({id:'human',bookId:book.id,locator,text:'我的批注',actor:'user',createdAt:'2026-01-01',updatedAt:'2026-01-01'}))
+    const first=await readBookWindow(book.id,{readerId:'g',length:200})
+    expect(first.traces?.map(x=>x.id)).toEqual(['human'])
+    expect((await getBookOverview(book.id,'g')).reader.position?.cursor).toBe(first.endCursor)
+    await closeBook({bookId:book.id,readerId:'g',cursor:first.endCursor,state:{understanding:'雨',feeling:'',questions:[],attention:[]}})
+    const next=await readBookWindow(book.id,{readerId:'g',length:200})
+    const interrupted=await getBookOverview(book.id,'g')
+    expect(interrupted.reader.state?.cursor).toBe(first.endCursor)
+    expect(interrupted.reader.recovery).toMatchObject({needed:true,fromCursor:first.endCursor,toCursor:next.endCursor})
+    const random=await randomReaderAnnotations(book.id,5)
+    expect(random.annotations.map(x=>x.id)).toEqual(['human'])
+    await readBookWindow(book.id,{readerId:'g',cursor:random.annotations[0].cursor,mode:'browse',length:200})
+    expect((await getBookOverview(book.id,'g')).reader.position?.cursor).toBe(next.endCursor)
+  })
+
 })

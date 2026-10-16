@@ -25,7 +25,7 @@ type HighlightRow = Tables<'highlights'>
 type AnnotationRow = Tables<'annotations'>
 type MarginaliaRow = Tables<'marginalia'>
 type ReaderProgressRow = { owner_id: string; reader_id: string; book_id: string; cursor: string | null; locator: Json; updated_at: string; deleted_at?: null }
-type ReaderStateRow = { owner_id: string; reader_id: string; book_id: string; understanding: string; feeling: string; questions: Json; attention: Json; updated_at: string; deleted_at?: null }
+type ReaderStateRow = { cursor?: string | null; locator?: Json | null; owner_id: string; reader_id: string; book_id: string; understanding: string; feeling: string; questions: Json; attention: Json; updated_at: string; deleted_at?: null }
 type ReaderTraceRow = { id: string; owner_id: string; reader_id: string; book_id: string; kind: string; locator: Json; text: string | null; session_id: string; created_at: string; updated_at: string; deleted_at: string | null }
 
 const STRUCTURED_TYPES: SyncEntityType[] = [
@@ -207,6 +207,8 @@ export function readerStatePayload(row: ReaderStateRow): ReaderState {
   return {
     readerId: row.reader_id, bookId: row.book_id,
     understanding: row.understanding, feeling: row.feeling,
+    ...(row.cursor ? { cursor: row.cursor } : {}),
+    ...(row.locator ? { locator: row.locator as unknown as Locator } : {}),
     questions: stringList(row.questions), attention: stringList(row.attention),
     updatedAt: row.updated_at,
   }

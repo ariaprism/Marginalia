@@ -44,7 +44,7 @@ describe('readerStore', () => {
     await saveReaderSession(progress, state)
 
     await expect(getReaderProgress('xiaoyu', 'book-1')).resolves.toEqual(progress)
-    await expect(getReaderState('xiaoyu', 'book-1')).resolves.toEqual(state)
+    await expect(getReaderState('xiaoyu', 'book-1')).resolves.toMatchObject(state)
   })
 
   it('按 readerId 隔离同一本书的位置与状态', async () => {
@@ -114,6 +114,6 @@ describe('readerStore', () => {
     await expect(getReaderProgress('xiaog', 'book-1')).resolves.toBeUndefined()
     await expect(getReaderState('xiaog', 'book-1')).resolves.toBeUndefined()
     await expect(getReaderTraces('xiaog', 'book-1')).resolves.toEqual([])
-    await expect(getReaderState('xiaog', 'book-2')).resolves.toEqual(other.state)
+    await expect(getReaderState('xiaog', 'book-2')).resolves.toMatchObject(other.state)
   })
 })

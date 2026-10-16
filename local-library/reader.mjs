@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { humanTraces, recoveryPlan, tracesInBlocks, sampleAnnotations } from '../supabase/functions/_shared/readerContext.mjs'
 import { findRecord, putRecord, readCollection } from './db.mjs'
 
 function decodeEntities(text) {
@@ -89,6 +90,9 @@ export function getBook(db, bookId, readerId) {
   const book = findRecord(db, 'books', bookId)
   if (!book) throw new Error('找不到这本书')
   const chapters = chaptersFor(db, bookId)
+  const progress = findRecord(db, 'readerProgress', readerId + ':' + bookId) ?? null
+  const state = findRecord(db, 'readerStates', readerId + ':' + bookId) ?? null
+  const first = chapters.find(c => c.inToc !== false && c.paragraphs.length)
   return {
     book,
     chapters: chapters.filter((chapter) => chapter.inToc !== false).map((chapter) => ({
@@ -98,13 +102,14 @@ export function getBook(db, bookId, readerId) {
     })),
     reader: {
       readerId,
-      progress: findRecord(db, 'readerProgress', readerId + ':' + bookId) ?? null,
-      state: findRecord(db, 'readerStates', readerId + ':' + bookId) ?? null,
+      progress, state,
+      recovery: recoveryPlan(progress, state?.cursor ? state : state && state.updatedAt === progress?.updatedAt ? { cursor: progress.cursor } : state, first ? `p1:${first.index}:0:0` : null),
     },
   }
 }
 
-export function readBook(db, bookId, readerId, requestedCursor, length = 1200) {
+export function readBook(db, bookId, readerId, requestedCursor, length = 1200, mode = 'continue') {
+  getBook(db, bookId, readerId)
   const chapters = chaptersFor(db, bookId)
   const saved = findRecord(db, 'readerProgress', readerId + ':' + bookId)
   const firstChapter = chapters.find((chapter) => chapter.inToc !== false && chapter.paragraphs.length)
@@ -113,11 +118,14 @@ export function readBook(db, bookId, readerId, requestedCursor, length = 1200) {
     : saved?.cursor
       ? cursor(saved.cursor)
       : { chapterIndex: firstChapter?.index ?? 0, paragraphIndex: 0, textOffset: 0 }
+  const paragraph = chapters[current.chapterIndex]?.paragraphs[current.paragraphIndex]
+  if (paragraph === undefined || current.textOffset > paragraph.length) throw new Error('阅读位置超出本书范围')
+  const raw = current
   current = nextCursor(chapters, current)
   const target = Math.min(4000, Math.max(200, Math.round(length)))
   const blocks = []
   let count = 0
-  let endCursor = encode(current ?? { chapterIndex: 0, paragraphIndex: 0, textOffset: 0 })
+  let endCursor = encode(current ?? raw)
   while (current && count < target) {
     const paragraph = chapters[current.chapterIndex]?.paragraphs[current.paragraphIndex]
     if (paragraph === undefined) throw new Error('阅读位置超出本书范围')
@@ -133,7 +141,13 @@ export function readBook(db, bookId, readerId, requestedCursor, length = 1200) {
     endCursor = encode({ ...current, textOffset: endOffset })
     current = nextCursor(chapters, { ...current, textOffset: endOffset })
   }
-  return { bookId, blocks, characterCount: count, endCursor, nextCursor: current ? encode(current) : null, atEnd: !current }
+  const traces = tracesInBlocks(localHumanTraces(db, bookId), chapters, blocks)
+  if (count && mode !== 'browse') {
+    db.exec('begin immediate')
+    try { saveProgress(db, bookId, readerId, endCursor); db.exec('commit') }
+    catch (error) { db.exec('rollback'); throw error }
+  }
+  return { bookId, blocks, traces, mode, progressSaved: count > 0 && mode !== 'browse', characterCount: count, endCursor, nextCursor: current ? encode(current) : null, atEnd: !current }
 }
 
 export function leaveTrace(db, input) {
@@ -172,7 +186,8 @@ export function leaveTrace(db, input) {
   return trace
 }
 
-export function closeBook(db, input) {
+function saveProgress(db, bookId, readerId, value) {
+  const input = { bookId, readerId, cursor: value }
   const position = cursor(input.cursor)
   const chapters = chaptersFor(db, input.bookId)
   const paragraph = chapters[position.chapterIndex]?.paragraphs[position.paragraphIndex]
@@ -180,6 +195,9 @@ export function closeBook(db, input) {
   const anchorStart = Math.min(position.textOffset, Math.max(0, paragraph.length - 1))
   const selectedText = paragraph.slice(anchorStart, anchorStart + 80)
   const updatedAt = new Date().toISOString()
+  const previous = findRecord(db, 'readerProgress', readerId + ':' + bookId)
+  const oldState = findRecord(db, 'readerStates', readerId + ':' + bookId)
+  if (oldState && !oldState.cursor && previous?.updatedAt === oldState.updatedAt) putRecord(db, 'readerStates', { ...oldState, cursor: previous.cursor, locator: previous.locator })
   putRecord(db, 'readerProgress', {
     readerId: input.readerId,
     bookId: input.bookId,
@@ -197,6 +215,27 @@ export function closeBook(db, input) {
     },
     updatedAt,
   })
-  putRecord(db, 'readerStates', { ...input.state, readerId: input.readerId, bookId: input.bookId, updatedAt })
-  return { saved: true, updatedAt }
+  return { updatedAt, locator: findRecord(db, 'readerProgress', readerId + ':' + bookId).locator }
+}
+
+export function closeBook(db, input) {
+  db.exec('begin immediate')
+  try {
+    const { updatedAt, locator } = saveProgress(db, input.bookId, input.readerId, input.cursor)
+    putRecord(db, 'readerStates', { ...input.state, readerId: input.readerId, bookId: input.bookId, cursor: input.cursor, locator, updatedAt })
+    db.exec('commit')
+    return { saved: true, updatedAt }
+  } catch (error) { db.exec('rollback'); throw error }
+}
+
+function localHumanTraces(db, bookId) {
+  const filter = c => readCollection(db, c).filter(x => !bookId || x.bookId === bookId)
+  return humanTraces(filter('highlights'), filter('annotations'), readCollection(db, 'profiles')[0]?.userName)
+}
+
+export function randomAnnotations(db, bookId, limit = 1) {
+  const books = readCollection(db, 'books').filter(b => !bookId || b.id === bookId)
+  if (bookId && !books.length) throw new Error('找不到这本书')
+  const map = new Map(books.map(b => [b.id, chaptersFor(db, b.id)]))
+  return { annotations: sampleAnnotations(localHumanTraces(db, bookId), map, limit), mode: 'browse', progressSaved: false, instruction: '用返回的 bookId 和 cursor 调用 read，mode=browse，翻看批注附近正文。' }
 }

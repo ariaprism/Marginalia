@@ -6,6 +6,11 @@ type StoredReaderProgress = ReaderProgress & { id: string }
 type StoredReaderState = ReaderState & { id: string }
 type StoredReaderTrace = ReaderTrace & { readerBookId: string }
 
+function cursorOf(locator: ReaderProgress['locator']): string {
+  const p = locator.position
+  return `p1:${p.chapterIndex}:${p.elementPath[0] ?? 0}:${p.textOffset}`
+}
+
 function readerBookId(readerId: string, bookId: string): string {
   return `${readerId}:${bookId}`
 }
@@ -40,6 +45,25 @@ export async function getReaderState(
   return withoutId(record)
 }
 
+/** 自动进度只更新位置，不挪动合书状态。旧状态与旧进度同时间时先补齐锚点。 */
+export async function saveReaderProgress(progress: ReaderProgress): Promise<void> {
+  const id = readerBookId(progress.readerId, progress.bookId)
+  await withStoresTransaction(['readerProgress', 'readerStates'], 'readwrite', transaction => {
+    const states = transaction.objectStore('readerStates')
+    const old = transaction.objectStore('readerProgress').get(id)
+    old.onsuccess = () => {
+      const state = states.get(id)
+      state.onsuccess = () => {
+        if (state.result && !state.result.cursor && old.result?.updatedAt === state.result.updatedAt) {
+          states.put({ ...state.result, cursor: old.result.cursor ?? cursorOf(old.result.locator), locator: old.result.locator })
+        }
+      }
+    }
+    transaction.objectStore('readerProgress').put({ ...progress, id } satisfies StoredReaderProgress)
+  })
+  notifySharedLibraryChanged()
+}
+
 /**
  * ReaderProgress 与 ReaderState 必须同进同退：这就是未来 close_book 的本地事务边界。
  * 本阶段暂不进入 Cloud Ink outbox，等多读者远端所有权语义确定后再接同步。
@@ -54,7 +78,7 @@ export async function saveReaderSession(
   const id = readerBookId(progress.readerId, progress.bookId)
   await withStoresTransaction(['readerProgress', 'readerStates'], 'readwrite', (transaction) => {
     transaction.objectStore('readerProgress').put({ ...progress, id } satisfies StoredReaderProgress)
-    transaction.objectStore('readerStates').put({ ...state, id } satisfies StoredReaderState)
+    transaction.objectStore('readerStates').put({ ...state, cursor: state.cursor ?? progress.cursor ?? cursorOf(progress.locator), locator: state.locator ?? progress.locator, id } satisfies StoredReaderState)
   })
   notifySharedLibraryChanged()
 }

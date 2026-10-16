@@ -1,8 +1,14 @@
+import { humanTraces, recoveryPlan, tracesInBlocks, sampleAnnotations, type HumanTrace } from '../../../supabase/functions/_shared/readerContext.mjs'
+import { getAllByIndex, withTransaction } from '../../data/local/db'
+import { getStoredProfile } from '../../data/local/profileStore'
+import type { Highlight } from '../../domain/highlight'
+import type { Annotation } from '../../domain/annotation'
 import { getBook } from '../../data/local/bookStore'
 import {
   getReaderProgress,
   getReaderState,
   saveReaderSession,
+  saveReaderProgress,
   saveReaderTrace,
 } from '../../data/local/readerStore'
 import type { Book } from '../../domain/book'
@@ -24,6 +30,7 @@ type ReadingCursor = {
 export type ReaderIdentity = {
   readerId: string
   position: { cursor: string; updatedAt: string } | null
+  recovery: ReturnType<typeof recoveryPlan>
   state: ReaderState | null
 }
 
@@ -48,6 +55,9 @@ export type ReadBlock = {
 
 export type ReadWindow = {
   bookId: string
+  traces?: HumanTrace[]
+  mode?: 'continue' | 'browse'
+  progressSaved?: boolean
   blocks: ReadBlock[]
   characterCount: number
   nextCursor: string | null
@@ -210,13 +220,14 @@ export async function getBookOverview(bookId: string, readerId: string): Promise
         ? { cursor: progress.cursor ?? cursorFromLocator(progress.locator), updatedAt: progress.updatedAt }
         : null,
       state: state ?? null,
+      recovery: recoveryPlan(progress ? { cursor: progress.cursor ?? cursorFromLocator(progress.locator) } : null, state?.cursor ? state : state && state.updatedAt === progress?.updatedAt ? {cursor:progress.cursor ?? cursorFromLocator(progress.locator)} : state, toc[0]?.cursor ?? null),
     },
   }
 }
 
 export async function readBookWindow(
   bookId: string,
-  options: { readerId?: string; cursor?: string; length?: number } = {},
+  options: { readerId?: string; cursor?: string; length?: number; mode?: 'continue' | 'browse' } = {},
 ): Promise<ReadWindow> {
   const [book, chapters, progress] = await Promise.all([
     getBook(bookId),
@@ -272,8 +283,12 @@ export async function readBookWindow(
     })
   }
 
+  const traces = tracesInBlocks(await loadHumanTraces(bookId), chapters.map((c, index) => ({ index, paragraphs: c.paragraphs })), blocks)
+  const progressSaved = !!options.readerId && options.mode !== 'browse' && characterCount > 0
+  if (progressSaved) await saveReaderProgress({ readerId: options.readerId!, bookId, cursor: endCursor, locator: locatorAtCursor(bookId, chapters, endCursor), updatedAt: new Date().toISOString() })
   return {
     bookId,
+    traces, mode: options.mode ?? 'continue', progressSaved,
     blocks,
     characterCount,
     nextCursor: cursor ? encodeCursor(cursor) : null,
@@ -334,6 +349,8 @@ export async function closeBook(input: {
     readerId: input.readerId,
     bookId: input.bookId,
     ...stateInput,
+    cursor: input.cursor,
+    locator: locatorAtCursor(input.bookId, chapters, input.cursor),
     updatedAt,
   })
   return { saved: true, updatedAt }
@@ -378,4 +395,24 @@ export async function leaveReaderTrace(input: {
   }
   await saveReaderTrace(trace)
   return trace
+}
+
+async function loadHumanTraces(bookId: string): Promise<HumanTrace[]> {
+  const [highlights, annotations, profile] = await Promise.all([
+    getAllByIndex<Highlight>('highlights', 'bookId', bookId),
+    getAllByIndex<Annotation>('annotations', 'bookId', bookId), getStoredProfile(),
+  ])
+  return humanTraces(highlights, annotations, profile?.userName)
+}
+
+export async function randomReaderAnnotations(bookId?: string, limit = 1) {
+  const books = bookId ? [await getBook(bookId)] : await withTransaction<Book[]>('books', 'readonly', store => store.getAll())
+  if (bookId && !books[0]) throw new AiReaderNotFoundError('找不到这本书')
+  const traces: HumanTrace[] = [], map = new Map<string, {index:number;paragraphs:string[]}[]>()
+  for (const book of books) {
+    if (!book) continue
+    traces.push(...await loadHumanTraces(book.id))
+    map.set(book.id, (await loadBookChapters(book.id)).map((c,index) => ({index,paragraphs:c.paragraphs})))
+  }
+  return { annotations: sampleAnnotations(traces, map, limit), mode: 'browse', progressSaved: false }
 }

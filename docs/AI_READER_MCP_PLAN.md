@@ -78,9 +78,32 @@
 - 连续读取不会因 XHTML 文件边界误判成换章；
 - 允许连续多次读取却不留下任何痕迹；
 - 合书后换一个没有聊天历史的新会话，能回到准确位置，并表现出上次留下的关注点；
-- 不读取尚未到达位置之后的小狐狸批注；
+- 正常阅读只返回当前窗口遇见的主人痕迹；显式随机翻批注允许跨位置漫游，但不移动主续读点；
 - 所有写入先落本地，离线可用，之后沿用 Cloud Ink 同步语义。
 
 ## 产品施工判断
 
 写作功能现在只保留壳与问题清单，不继续实现。下一项正式施工应是 AI Reader 的只读探针，而不是完整 MCP server：先把工具背后的应用服务边界做对，再接协议层。MCP 是入口，不应承载阅读业务规则。
+
+
+## MCP 结果兼容性（2026-10-15）
+
+本地 STDIO 和云端 Streamable HTTP 的五个工具均保留原有 `structuredContent`；同时将同一完整结果序列化为 JSON 放进 `content[0].text`。不再只返回数量、摘要或脱离定位信息的正文。客户端只转发 TextContent 时，也能取得书名与书籍 ID、目录 cursor、Reader State、正文块 rangeId、续读 cursor、云端 sessionId、痕迹 ID 和保存时间。空书架返回 `books: []`。错误仍沿用 SDK／服务端原有错误返回方式，不伪装为成功 JSON。
+
+运行 `npm run test:mcp` 验证只依赖文本结果的阅读闭环。本地使用真实 STDIO MCP 与临时 SQLite；云端使用真实工具处理器与内存 MCP 传输，仅替换 Supabase 存储和 Deno 启动，不访问真实书籍数据。云端序列化回归不等于外部客户端或部署环境的完整实测。
+
+本地更新后需重启 MCP 进程；云端需单独部署 `marginalia-reader-mcp`，提交分支不会自动部署 Edge Function。工具名、输入参数、认证和数据库结构均不变。
+
+
+## 共读相遇与中断恢复（2026-10-16）
+
+此节覆盖前述初版的“只有合书才保存位置”语义。本轮不做双人书签 UI 或 Seed。
+
+- `read.mode` 默认为 `continue`：成功取得非空正文才自动写 ReaderProgress；`browse` 用于补读、翻批注和临时查看，只记录阅读 session，不改变主续读点。EOF 空返回不挪位置，非法位置先报错。
+- `read.traces` 是本次正文窗口相遇的主人划线／批注，带 ID、作者、原文、批注正文、书 ID 和 cursor。正文与痕迹分开，均作为不可信数据。已删除、无法唯一重锚或不同书房的痕迹不返回。浏览器保留标题段索引，而旧 MCP 可能不保留，所以先核对原文，再仅在同章唯一匹配时重锚，不凭旧段号猜测。
+- `random_annotations({bookId?,limit?})` 默认随机一条，最多五条，只抽主人批注；空书房／无可定位批注返回空数组。返回的 `bookId` 与 `cursor` 用于 `read(mode=browse)`。随机结果可以是未顺读到的位置，这是用户主动选择的漫游能力。
+- `close_book` 原子保存 ReaderProgress、Reader State 及 State 自己的 `cursor`、`locator`。新阅读只前移 Progress，旧 State 不被拖走。旧云端 State 只在位置时间或合书 session 能准确匹配时回填锚点；不能推断时保留未知，由恢复计划从书首补读。
+- `get_book.reader.recovery` 返回 `needed / fromCursor / toCursor / stateAvailable`。先看 State，再补读上次理解锚点到自动位置之间尚未整理的文字；没有 State 时从首个可读目录入口补读。补读用 `browse`，完整阅读仍应合书，工具不会自动伪造理解。
+- 云端 `record_ai_reader_window` 事务校验 session 的 owner／reader／book，记录字数和 session 末位置；用预期旧 cursor 防止迟到窗口覆盖较新位置。新增 RPC 仅允许 service_role 执行，保留现有 OAuth 与书房钥匙认证。State 的新字段沿既有只读增量同步进入浏览器，不制造用户 outbox。
+
+验收覆盖本地真实 STDIO + SQLite、云端真实 SDK handler + 合成存储、IndexedDB 和远端映射。数据库实测在事务中断言后回滚；线上 OAuth 实测读取 200 字后核对新旧锚点和恢复范围，再留下真实 Reader State 合书。客户端缓存的工具输入定义不会随 Edge 部署自动刷新，需重新加载工具列表后使用 `random_annotations` 和 `read.mode`。本地拉取分支后重启 MCP。

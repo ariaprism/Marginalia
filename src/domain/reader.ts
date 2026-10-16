@@ -11,6 +11,9 @@ export type ReaderProgress = {
 }
 
 export type ReaderState = {
+  /** 理解状态所锚定的合书位置，独立于自动续读点；旧记录可以暂缺。 */
+  cursor?: string
+  locator?: Locator
   readerId: string
   bookId: string
   /** 此刻怎样理解这本书，不要求复述情节。 */

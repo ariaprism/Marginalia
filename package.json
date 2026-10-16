@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:mcp": "node --test local-library/mcp-results.test.mjs",
     "local-library": "node local-library/server.mjs",
     "dev:shared": "node local-library/dev.mjs",
     "mcp:local": "node local-library/mcp.mjs",
