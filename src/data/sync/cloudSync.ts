@@ -3,6 +3,7 @@ import type { Database } from '../remote/database.types'
 import { compactOutbox } from '../local/syncStore'
 import { syncPrivateBookFiles, type BookFileSyncResult } from './bookFileSync'
 import { syncStructuredCloudInk } from './profileBookSync'
+import { bootstrapReaderVisits } from './bootstrapReaderVisits'
 import { notifyCloudSyncFinished } from './syncSignals'
 
 export type CloudSyncResult = {
@@ -16,6 +17,7 @@ type CloudSyncSteps = {
   structured: typeof syncStructuredCloudInk
   files: typeof syncPrivateBookFiles
   compact: typeof compactOutbox
+  visits?: typeof bootstrapReaderVisits
   finished: typeof notifyCloudSyncFinished
 }
 
@@ -23,6 +25,7 @@ const defaultSteps: CloudSyncSteps = {
   structured: syncStructuredCloudInk,
   files: syncPrivateBookFiles,
   compact: compactOutbox,
+  visits: bootstrapReaderVisits,
   finished: notifyCloudSyncFinished,
 }
 
@@ -55,6 +58,7 @@ export function runCloudSync(
     do {
       repeatAfterActiveRun = false
       const structured = await steps.structured(client, remoteUserId)
+      await steps.visits?.(client, remoteUserId)
       const files = await steps.files(client, remoteUserId)
       await steps.compact()
       total.pushed += structured.pushed

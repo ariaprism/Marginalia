@@ -3,6 +3,7 @@ import type { Annotation } from '../../domain/annotation'
 import type { Book } from '../../domain/book'
 import type { Highlight } from '../../domain/highlight'
 import type { Marginalia } from '../../domain/marginalia'
+import type { ReaderProgress, ReaderState, ReaderTrace, ReaderSession } from '../../domain/reader'
 import type { ReadingProgress } from '../../domain/readingProgress'
 import { withStoresTransaction } from '../local/db'
 import type { StoredChapter, StoredEpubFile } from '../local/bookStore'
@@ -17,6 +18,8 @@ import {
   marginaliaPayload,
   profilePayload,
   readingPayload,
+  readerProgressPayload, readerStatePayload, readerTracePayload, readerSessionPayload,
+  type ReaderProgressRow, type ReaderStateRow, type ReaderTraceRow, type ReaderSessionRow,
 } from '../remote/cloudInkRemote'
 import type { Database, Tables } from '../remote/database.types'
 import type { SyncState } from './operations'
@@ -33,6 +36,10 @@ export type CloudRestoreSnapshot = {
   annotations: Annotation[]
   marginalia: Marginalia[]
   epubFiles: StoredEpubFile[]
+  readerProgress?: ReaderProgress[]
+  readerStates?: ReaderState[]
+  readerTraces?: ReaderTrace[]
+  readerSessions?: ReaderSession[]
   cursor: number
 }
 
@@ -82,8 +89,9 @@ export function createSupabaseCloudRestoreGateway(
 ): CloudRestoreGateway {
   return {
     async prepareSnapshot(remoteUserId) {
+      const readerClient = client as unknown as SupabaseClient
       const [profileResult, cloudBooks, chapterRows, positionRows, bookmarkRows,
-        highlightRows, annotationRows, marginaliaRows, cursorResult] = await Promise.all([
+        highlightRows, annotationRows, marginaliaRows, cursorResult, readerProgress, readerStates, readerTraces, readerSessions] = await Promise.all([
         client.from('profiles').select('*').maybeSingle(),
         collectPages<Tables<'books'>>((from, to) => client.from('books').select('*').is('deleted_at', null).order('id').range(from, to)),
         collectPages<Tables<'book_sections'>>((from, to) => client.from('book_sections').select('*').is('deleted_at', null).order('id').range(from, to)),
@@ -94,6 +102,10 @@ export function createSupabaseCloudRestoreGateway(
         collectPages<Tables<'annotations'>>((from, to) => client.from('annotations').select('*').is('deleted_at', null).order('id').range(from, to)),
         collectPages<Tables<'marginalia'>>((from, to) => client.from('marginalia').select('*').is('deleted_at', null).order('id').range(from, to)),
         client.from('sync_changes').select('change_id').order('change_id', { ascending: false }).limit(1).maybeSingle(),
+        collectPages<ReaderProgressRow>((from,to) => readerClient.from('reader_progress').select('*').order('reader_id').order('book_id').range(from,to)),
+        collectPages<ReaderStateRow>((from,to) => readerClient.from('reader_states').select('*').order('reader_id').order('book_id').range(from,to)),
+        collectPages<ReaderTraceRow>((from,to) => readerClient.from('reader_traces').select('*').is('deleted_at',null).order('id').range(from,to)),
+        collectPages<ReaderSessionRow>((from,to) => readerClient.from('reader_sessions').select('*').order('id').range(from,to)),
       ])
       const profile = profileResult.error ? (() => { throw new Error(profileResult.error.message) })() : profileResult.data
       if (cursorResult.error) throw new Error(cursorResult.error.message)
@@ -135,6 +147,8 @@ export function createSupabaseCloudRestoreGateway(
         annotations: annotationRows.map(annotationPayload),
         marginalia: marginaliaRows.map(marginaliaPayload),
         epubFiles: downloaded.map(({ book, epub }) => ({ bookId: book.id, file: epub, addedAt: now })),
+        readerProgress:readerProgress.map(readerProgressPayload), readerStates:readerStates.map(readerStatePayload),
+        readerTraces:readerTraces.map(readerTracePayload), readerSessions:readerSessions.map(readerSessionPayload),
         cursor: cursorResult.data?.change_id ?? 0,
       }
     },
@@ -152,7 +166,7 @@ export async function restoreCloudLibraryWithGateway(
   const snapshot = await gateway.prepareSnapshot(remoteUserId)
   const storeNames = [
     'profiles', 'books', 'epubFiles', 'chapters', 'readingProgress', 'bookmarks',
-    'highlights', 'annotations', 'marginalia', 'outbox', 'syncState',
+    'highlights', 'annotations', 'marginalia', 'outbox', 'syncState', 'readerProgress', 'readerStates', 'readerTraces', 'readerSessions',
   ]
   const now = new Date().toISOString()
   await withStoresTransaction(storeNames, 'readwrite', (transaction) => {
@@ -166,6 +180,9 @@ export async function restoreCloudLibraryWithGateway(
     for (const item of snapshot.highlights) transaction.objectStore('highlights').put(item)
     for (const item of snapshot.annotations) transaction.objectStore('annotations').put(item)
     for (const item of snapshot.marginalia) transaction.objectStore('marginalia').put(item)
+    for (const name of ['readerProgress','readerStates'] as const) for (const item of snapshot[name] ?? []) transaction.objectStore(name).put({...item,id:`${item.readerId}:${item.bookId}`})
+    for (const item of snapshot.readerTraces ?? []) transaction.objectStore('readerTraces').put({...item,readerBookId:`${item.readerId}:${item.bookId}`})
+    for (const item of snapshot.readerSessions ?? []) transaction.objectStore('readerSessions').put(item)
     transaction.objectStore('syncState').put({
       remoteUserId,
       lastPulledChangeId: snapshot.cursor,
@@ -173,6 +190,7 @@ export async function restoreCloudLibraryWithGateway(
       profileBookInitialSyncCompletedAt: now,
       structuredInitialSyncCompletedAt: now,
       initialSyncCompletedAt: now,
+      readerVisitsBootstrappedAt: snapshot.readerSessions ? now : undefined,
     } satisfies SyncState)
   })
   return {

@@ -9,11 +9,12 @@ import {
   getReaderState,
   saveReaderSession,
   saveReaderProgress,
+  getReadingVisit, saveReadingVisit,
   saveReaderTrace,
 } from '../../data/local/readerStore'
 import type { Book } from '../../domain/book'
 import { createLocator, extractContext } from '../../domain/locator'
-import type { ReaderState, ReaderTrace } from '../../domain/reader'
+import type { ReaderState, ReaderTrace, ReaderSession } from '../../domain/reader'
 import { loadBookChapters, type ChapterText } from '../../reader/bookContent'
 import { newId } from '../../shared/id'
 
@@ -54,6 +55,7 @@ export type ReadBlock = {
 }
 
 export type ReadWindow = {
+  sessionId?: string
   bookId: string
   traces?: HumanTrace[]
   mode?: 'continue' | 'browse'
@@ -227,7 +229,7 @@ export async function getBookOverview(bookId: string, readerId: string): Promise
 
 export async function readBookWindow(
   bookId: string,
-  options: { readerId?: string; cursor?: string; length?: number; mode?: 'continue' | 'browse' } = {},
+  options: { readerId?: string; cursor?: string; length?: number; mode?: 'continue' | 'browse'; sessionId?: string } = {},
 ): Promise<ReadWindow> {
   const [book, chapters, progress] = await Promise.all([
     getBook(bookId),
@@ -284,10 +286,13 @@ export async function readBookWindow(
   }
 
   const traces = tracesInBlocks(await loadHumanTraces(bookId), chapters.map((c, index) => ({ index, paragraphs: c.paragraphs })), blocks)
+  const visit = options.readerId ? await openVisit(bookId,options.readerId,encodeCursor(start),options.sessionId,options.mode==='browse'?'browsing':'reading',chapters) : undefined
   const progressSaved = !!options.readerId && options.mode !== 'browse' && characterCount > 0
   if (progressSaved) await saveReaderProgress({ readerId: options.readerId!, bookId, cursor: endCursor, locator: locatorAtCursor(bookId, chapters, endCursor), updatedAt: new Date().toISOString() })
+  if(visit)await saveReadingVisit({...visit,endCursor,endLocator:locatorAtCursor(bookId,chapters,endCursor),characterCount:visit.characterCount+characterCount,updatedAt:new Date().toISOString()})
   return {
     bookId,
+    ...(visit ? {sessionId:visit.id} : {}),
     traces, mode: options.mode ?? 'continue', progressSaved,
     blocks,
     characterCount,
@@ -333,12 +338,16 @@ export async function closeBook(input: {
   readerId: string
   cursor: string
   state: ReaderStateInput
+  sessionId?: string
   now?: string
 }): Promise<{ saved: true; updatedAt: string }> {
   const [book, chapters] = await Promise.all([getBook(input.bookId), loadBookChapters(input.bookId)])
   if (!book) throw new AiReaderNotFoundError('找不到书籍：' + input.bookId)
   const stateInput = normalizedState(input.state)
   const updatedAt = input.now ?? new Date().toISOString()
+  const visit=await openVisit(input.bookId,input.readerId,input.cursor,input.sessionId,undefined,chapters)
+  const closed={...visit,closedAt:updatedAt,updatedAt,endCursor:input.cursor,endLocator:locatorAtCursor(input.bookId,chapters,input.cursor),state:stateInput}
+  if(visit.mode!=='reading'){await saveReadingVisit(closed);return {saved:true,updatedAt}}
   await saveReaderSession({
     readerId: input.readerId,
     bookId: input.bookId,
@@ -352,7 +361,7 @@ export async function closeBook(input: {
     cursor: input.cursor,
     locator: locatorAtCursor(input.bookId, chapters, input.cursor),
     updatedAt,
-  })
+  }, closed)
   return { saved: true, updatedAt }
 }
 
@@ -364,6 +373,7 @@ export async function leaveReaderTrace(input: {
   quote: string
   kind: ReaderTrace['kind']
   text?: string
+  sessionId?: string
   now?: string
 }): Promise<ReaderTrace> {
   const [book, chapters] = await Promise.all([getBook(input.bookId), loadBookChapters(input.bookId)])
@@ -381,6 +391,7 @@ export async function leaveReaderTrace(input: {
   if (text && text.length > 1200) throw new Error('这条批注太长，请只留下此刻最想保存的念头')
   const trace: ReaderTrace = {
     id: 'reader-trace-' + newId(),
+    ...(input.sessionId ? {sessionId:input.sessionId} : {}),
     readerId: input.readerId,
     bookId: input.bookId,
     kind: input.kind,
@@ -393,7 +404,9 @@ export async function leaveReaderTrace(input: {
     ...(text ? { text } : {}),
     createdAt: input.now ?? new Date().toISOString(),
   }
+  const visit=input.sessionId?await openVisit(input.bookId,input.readerId,'',input.sessionId,undefined,chapters):undefined
   await saveReaderTrace(trace)
+  if(visit)await saveReadingVisit({...visit,traceCount:visit.traceCount+1,updatedAt:trace.createdAt})
   return trace
 }
 
@@ -415,4 +428,15 @@ export async function randomReaderAnnotations(bookId?: string, limit = 1) {
     map.set(book.id, (await loadBookChapters(book.id)).map((c,index) => ({index,paragraphs:c.paragraphs})))
   }
   return { annotations: sampleAnnotations(traces, map, limit), mode: 'browse', progressSaved: false }
+}
+
+async function openVisit(bookId:string,readerId:string,cursor:string,id:string|undefined,mode:ReaderSession['mode']|undefined,chapters:ChapterText[]):Promise<ReaderSession> {
+  if(id){
+    const visit=await getReadingVisit(id)
+    if(!visit||visit.bookId!==bookId||visit.readerId!==readerId||visit.closedAt)throw new Error('阅读 session 不存在或已经合书')
+    if(mode&&visit.mode!==mode&&!(mode==='browsing'&&visit.mode==='annotations'))throw new Error('顺读和临时翻看请使用各自的 session')
+    return visit
+  }
+  const now=new Date().toISOString()
+  return {id:newId(),readerId,bookId,mode:mode??'reading',startCursor:cursor,startLocator:locatorAtCursor(bookId,chapters,cursor),startedAt:now,updatedAt:now,characterCount:0,traceCount:0,viewedAnnotationIds:[]}
 }

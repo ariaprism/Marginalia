@@ -13,6 +13,7 @@ export type SyncEntityType =
   | 'readerProgress'
   | 'readerState'
   | 'readerTrace'
+  | 'readerSession'
 
 export type SyncOperationKind = 'upsert' | 'delete' | 'upload_file'
 
@@ -44,6 +45,7 @@ export type SyncState = {
   lastSuccessfulSyncAt?: string
   profileBookInitialSyncCompletedAt?: string
   structuredInitialSyncCompletedAt?: string
+  readerVisitsBootstrappedAt?: string
   initialSyncCompletedAt?: string
 }
 

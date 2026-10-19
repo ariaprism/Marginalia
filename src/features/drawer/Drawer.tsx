@@ -1,5 +1,7 @@
 import { BookOpenText, ChevronRight, Cloud, Feather, Fish, LibraryBig, SquarePen } from 'lucide-react'
 import { SidebarMenuButton } from '../bookshelf/components'
+import type { Locator } from '../../domain/locator'
+import { Visits } from '../presence/Visits'
 import { CloudRoom } from '../cloud/CloudRoom'
 import type { CallingCard, CompanionPronoun } from '../settings/localSettings'
 
@@ -80,7 +82,10 @@ export function DrawerPageContent({
   companionSubject,
   onCallingCardChange,
   onCloudContentChanged,
+  onVisitOpen, revision,
 }: {
+  onVisitOpen?: (bookId:string,locator?:Locator)=>void
+  revision?: number
   section: DrawerPage
   callingCard: CallingCard
   companionLabel: string
@@ -106,6 +111,8 @@ export function DrawerPageContent({
     )
   }
 
+  if (section === 'visits') return <Visits companionLabel={companionLabel} revision={revision} onOpen={onVisitOpen} />
+
   if (section === 'cloud') return <CloudRoom onLocalContentChanged={onCloudContentChanged} />
 
   return (
@@ -113,7 +120,6 @@ export function DrawerPageContent({
       <section className="drawer-placeholder drawer-panel" aria-live="polite">
         <p>
           {section === 'thoughts' && '以后可以在这里写下不依附于某一本书的文字。'}
-          {section === 'visits' && `${companionLabel}进入书房、翻过书页或留下文字的踪迹，会安静地收在这里。`}
           {section === 'shadow-books' && '从微信读书带回的旧划线与想法，会先以影子书的方式留在这里。'}
         </p>
         <span>这只抽屉已经留好位置，尚未启用。</span>

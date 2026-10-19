@@ -50,12 +50,13 @@ server.registerTool('read', {
     bookId: z.string(),
     readerId: z.string(),
     cursor: z.string().optional(),
+    sessionId: z.string().uuid().optional(),
     mode: z.enum(['continue', 'browse']).optional().describe('continue 自动保存进度；browse 临时翻看或补读，不移动主续读点'),
     length: z.number().int().min(200).max(4000).optional(),
   },
   annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
-}, async ({ bookId, readerId, cursor, length, mode }) => {
-  const result = readBook(db, bookId, readerId, cursor, length, mode)
+}, async ({ bookId, readerId, cursor, length, mode, sessionId }) => {
+  const result = readBook(db, bookId, readerId, cursor, length, mode, sessionId)
   return {
     structuredContent: result,
     content: [{ type: 'text', text: JSON.stringify(result) }],
@@ -68,6 +69,7 @@ server.registerTool('leave_trace', {
   inputSchema: {
     bookId: z.string(),
     readerId: z.string(),
+    sessionId: z.string().uuid().optional(),
     rangeId: z.string(),
     quote: z.string().min(1).describe('刚才读到的完整一句或连续几句原文，必须逐字引用'),
     kind: z.enum(['highlight', 'annotation']),
@@ -89,6 +91,7 @@ server.registerTool('close_book', {
     bookId: z.string(),
     readerId: z.string(),
     cursor: z.string(),
+    sessionId: z.string().uuid().optional(),
     state: z.object({
       understanding: z.string().max(800),
       feeling: z.string().max(400),
@@ -107,10 +110,10 @@ server.registerTool('close_book', {
 
 server.registerTool('random_annotations', {
   title: '翻翻页边', description: '随机翻阅书房主人留下的批注，可限定一本书。返回可用于 read(mode=browse) 的位置，不移动主续读点。',
-  inputSchema: { bookId: z.string().optional(), limit: z.number().int().min(1).max(5).optional() },
-  annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-}, async ({ bookId, limit }) => {
-  const result = randomAnnotations(db, bookId, limit)
+  inputSchema: { readerId: z.string(), bookId: z.string().optional(), limit: z.number().int().min(1).max(5).optional() },
+  annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+}, async ({ bookId, limit, readerId }) => {
+  const result = randomAnnotations(db, bookId, limit, readerId)
   return { structuredContent: result, content: [{ type: 'text', text: JSON.stringify(result) }] }
 })
 

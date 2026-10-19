@@ -16,7 +16,7 @@ import {
 import type { SyncLocal } from './engine'
 import type { RemoteChange, SyncOperation, SyncState } from './operations'
 
-const bookChildStores = ['chapters', 'highlights', 'annotations', 'marginalia'] as const
+const bookChildStores = ['chapters', 'highlights', 'annotations', 'marginalia', 'readerProgress', 'readerStates', 'readerTraces', 'readerSessions'] as const
 
 function deleteBookChildren(transaction: IDBTransaction, bookId: string): void {
   transaction.objectStore('epubFiles').delete(bookId)
@@ -63,7 +63,7 @@ export class IndexedDbSyncLocal implements SyncLocal {
     const stores = [
       'profiles', 'books', 'epubFiles', 'chapters', 'readingProgress', 'bookmarks',
       'highlights', 'annotations', 'marginalia', 'readerProgress', 'readerStates',
-      'readerTraces', 'outbox', 'syncState',
+      'readerTraces', 'readerSessions', 'outbox', 'syncState',
     ]
     await new Promise<void>((resolve, reject) => {
       const transaction = db.transaction(stores, 'readwrite')
@@ -150,6 +150,11 @@ export class IndexedDbSyncLocal implements SyncLocal {
               store.put({ ...value, id: `${value.readerId}:${value.bookId}` })
             }
           }
+          if (change.entityType === 'readerSession') {
+            const store = transaction.objectStore('readerSessions')
+            if (change.operation === 'delete') store.delete(change.entityId)
+            else if (change.payload) store.put(change.payload)
+          }
           if (change.entityType === 'readerTrace') {
             const store = transaction.objectStore('readerTraces')
             if (change.operation === 'delete') store.delete(change.entityId)
@@ -164,6 +169,7 @@ export class IndexedDbSyncLocal implements SyncLocal {
       stateRequest.onsuccess = () => {
         const previous = stateRequest.result as SyncState | undefined
         transaction.objectStore('syncState').put({
+          ...previous,
           remoteUserId: this.remoteUserId,
           lastPulledChangeId: Math.max(previous?.lastPulledChangeId ?? 0, cursor),
           lastSuccessfulSyncAt: new Date().toISOString(),

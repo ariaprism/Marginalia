@@ -1,4 +1,4 @@
-import type { ReaderProgress, ReaderState, ReaderTrace } from '../../domain/reader'
+import type { ReaderProgress, ReaderState, ReaderTrace, ReaderSession } from '../../domain/reader'
 import { getAllByIndex, withStoresTransaction, withTransaction } from './db'
 import { deleteSharedReaderRecords, notifySharedLibraryChanged } from './sharedLibrary'
 
@@ -71,13 +71,15 @@ export async function saveReaderProgress(progress: ReaderProgress): Promise<void
 export async function saveReaderSession(
   progress: ReaderProgress,
   state: ReaderState,
+  visit?: ReaderSession,
 ): Promise<void> {
   if (progress.readerId !== state.readerId || progress.bookId !== state.bookId) {
     throw new Error('读者位置与读者状态不属于同一次阅读')
   }
   const id = readerBookId(progress.readerId, progress.bookId)
-  await withStoresTransaction(['readerProgress', 'readerStates'], 'readwrite', (transaction) => {
+  await withStoresTransaction(['readerProgress', 'readerStates', 'readerSessions'], 'readwrite', (transaction) => {
     transaction.objectStore('readerProgress').put({ ...progress, id } satisfies StoredReaderProgress)
+    if (visit) transaction.objectStore('readerSessions').put(visit)
     transaction.objectStore('readerStates').put({ ...state, cursor: state.cursor ?? progress.cursor ?? cursorOf(progress.locator), locator: state.locator ?? progress.locator, id } satisfies StoredReaderState)
   })
   notifySharedLibraryChanged()
@@ -116,7 +118,7 @@ function deleteByBookId(store: IDBObjectStore, bookId: string): void {
 async function deleteReaderDataForBook(bookId: string, includeTraces: boolean): Promise<void> {
   await deleteSharedReaderRecords(bookId, includeTraces ? 'all' : 'checkpoint')
   const stores = includeTraces
-    ? ['readerProgress', 'readerStates', 'readerTraces']
+    ? ['readerProgress', 'readerStates', 'readerTraces', 'readerSessions']
     : ['readerProgress', 'readerStates']
   await withStoresTransaction(stores, 'readwrite', (transaction) => {
     for (const storeName of stores) deleteByBookId(transaction.objectStore(storeName), bookId)
@@ -132,4 +134,12 @@ export async function resetReadersForBook(bookId: string): Promise<void> {
 /** 清除共读者在一本书中的位置、理解状态、划线和批注。 */
 export async function clearReadersForBook(bookId: string): Promise<void> {
   await deleteReaderDataForBook(bookId, true)
+}
+
+export async function getReadingVisit(id: string): Promise<ReaderSession | undefined> {
+  return withTransaction('readerSessions','readonly',store=>store.get(id))
+}
+export async function saveReadingVisit(visit:ReaderSession): Promise<void> {
+  await withTransaction('readerSessions','readwrite',store=>store.put(visit))
+  notifySharedLibraryChanged()
 }

@@ -15,6 +15,7 @@ const gateway = (): CloudInkGateway => ({
   getMarginalia: vi.fn(async () => []),
   getReaderProgress: vi.fn(async () => []),
   getReaderStates: vi.fn(async () => []),
+  getReaderSessions: vi.fn(async () => []),
   getReaderTraces: vi.fn(async () => []),
 })
 
@@ -132,4 +133,13 @@ describe('CloudInkRemote structured sync', () => {
     expect(result.changes[1].payload).toMatchObject({ cursor:'p1:0:0:2', locator })
     expect(result.changes[2].payload).toMatchObject({ readerId: 'xiaog', kind: 'annotation', text: '因为花费过时间。' })
   })
+  it('同步真实来访及其独立余记，重复变化按 session ID 合并',async()=>{
+    const api=gateway()
+    vi.mocked(api.listChanges).mockResolvedValue([1,2].map(id=>({change_id:id,changed_at:'2026-10-19T00:00:00Z',entity_type:'readerSession',entity_id:'visit',operation:'upsert',owner_id:'user'})))
+    vi.mocked(api.getReaderSessions!).mockResolvedValue([{id:'visit',owner_id:'user',reader_id:'xiaog',book_id:'book',mode:'browsing',started_at:'2026-10-19T00:00:00Z',updated_at:'2026-10-19T00:05:00Z',closed_at:'2026-10-19T00:05:00Z',start_cursor:'p1:0:0:0',end_cursor:'p1:1:0:0',character_count:200,trace_count:0,viewed_annotation_ids:['human-note'],state_snapshot:{understanding:'回看',feeling:'',questions:[],attention:[]}}])
+    const result=await new CloudInkRemote(api).pull(0)
+    expect(result.changes).toHaveLength(1)
+    expect(result.changes[0].payload).toMatchObject({id:'visit',mode:'browsing',closedAt:'2026-10-19T00:05:00Z',viewedAnnotationIds:['human-note'],state:{understanding:'回看'}})
+  })
+
 })

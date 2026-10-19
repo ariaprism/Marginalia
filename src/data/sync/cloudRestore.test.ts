@@ -72,4 +72,16 @@ describe('complete cloud recovery', () => {
     await expect(restoreCloudLibraryWithGateway(gateway, 'reader-1')).rejects.toThrow('EPUB 下载失败')
     expect((await getAllBooks()).map((book) => book.id)).toEqual(['old'])
   })
+  it('整库恢复带回来访与合书锚点，清除旧读者孤儿数据且不产生待寄',async()=>{
+    const snap=snapshot()
+    const loc={bookId:'cloud',position:{chapterIndex:0,elementPath:[0],textOffset:0,selectedText:'正文',beforeContext:'',afterContext:''}}
+    snap.readerStates=[{readerId:'xiaog',bookId:'cloud',cursor:'p1:0:0:0',locator:loc,understanding:'书',feeling:'',questions:[],attention:[],updatedAt:'2026-10-19T00:00:00Z'}]
+    snap.readerSessions=[{id:'visit',readerId:'xiaog',bookId:'cloud',mode:'reading',startedAt:'2026-10-19T00:00:00Z',updatedAt:'2026-10-19T00:00:00Z',characterCount:2,traceCount:0,viewedAnnotationIds:[]}]
+    await withTransaction('readerSessions','readwrite',store=>store.put({...snap.readerSessions![0],id:'old',bookId:'missing'}))
+    await restoreCloudLibraryWithGateway(new PreparedGateway(snap),'reader')
+    expect(await withTransaction('readerSessions','readonly',s=>s.getAll())).toEqual(snap.readerSessions)
+    expect(await withTransaction('readerStates','readonly',s=>s.get('xiaog:cloud'))).toMatchObject({cursor:'p1:0:0:0',locator:loc})
+    expect(await getOutboxOperations()).toEqual([])
+  })
+
 })

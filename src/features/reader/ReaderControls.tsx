@@ -18,6 +18,7 @@ function PanelHeading({ eyebrow, title, close }: { eyebrow: string; title: strin
 }
 
 type Props = {
+  companionChapters?: {index:number;name:string}[]
   panel: ReaderPanel
   chromeVisible: boolean
   chapters: ChapterText[]
@@ -50,7 +51,7 @@ export function ReaderControls(props: Props) {
       {props.panel && (
         <section className="reader-panel">
           <div className="panel-handle" />
-          {props.panel === 'toc' && <><PanelHeading eyebrow="CONTENTS" title="目录" close={close} /><div className="toc-list">{props.chapters.map((chapter, index) => chapter.inToc === false ? null : <button className={[index === props.currentChapterIndex ? 'is-current' : '', chapter.chapter ? 'has-chapter-label' : ''].filter(Boolean).join(' ')} type="button" key={`${index}-${chapter.title}`} onClick={() => props.onJumpToChapter(index)}>{chapter.chapter && <span>{chapter.chapter}</span>}<strong>{chapter.title}</strong><small>{String((props.chapterStarts[index] ?? 0) + 1).padStart(2, '0')}</small></button>)}</div></>}
+          {props.panel === 'toc' && <><PanelHeading eyebrow="CONTENTS" title="目录" close={close} /><div className="toc-list">{props.chapters.map((chapter, index) => chapter.inToc === false ? null : <button className={[index === props.currentChapterIndex ? 'is-current' : '', chapter.chapter ? 'has-chapter-label' : ''].filter(Boolean).join(' ')} type="button" key={`${index}-${chapter.title}`} onClick={() => props.onJumpToChapter(index)}>{chapter.chapter && <span>{chapter.chapter}</span>}<strong>{chapter.title}{props.companionChapters?.some(c=>c.index===index)&&<i className="companion-toc-dot" aria-label={props.companionChapters.filter(c=>c.index===index).map(c=>`${c.name}停在这一章`).join('、')} />}</strong><small>{String((props.chapterStarts[index] ?? 0) + 1).padStart(2, '0')}</small></button>)}</div></>}
           {props.panel === 'traces' && <><PanelHeading eyebrow="MARGINALIA" title="页边痕迹" close={close} /><div className="trace-list">{props.traces.length === 0 ? <p className="panel-empty">这本书还没有留下痕迹。</p> : [...props.traces].reverse().map((trace) => <button type="button" key={trace.id} onClick={() => props.onJumpToTrace(trace)}><small>{trace.chapter}</small><blockquote>“<span className={traceLineClass(trace)}>{trace.quote}</span>”</blockquote>{orderedTraceNotes(trace).map((note) => <p className={note.actor === 'companion' ? 'fish-note' : ''} key={note.id}><b>{note.actor === 'user' ? props.userLabel : props.companionLabel}</b>：{note.text}</p>)}</button>)}</div></>}
           {props.panel === 'stats' && <><PanelHeading eyebrow="READING LIFE" title="阅读统计" close={close} /><div className="stats-grid stats-grid-v2"><div><strong>{Math.round(((props.pageIndex + 1) / props.totalPages) * 100)}<sup>%</sup></strong><small>当前所在位置</small></div><div><strong>{props.chapters.filter((chapter) => chapter.inToc !== false).length} 节</strong><small>原书目录</small></div><div><strong>{props.traces.length} 条</strong><small>笔记与划线</small></div></div></>}
           {props.panel === 'type' && <><PanelHeading eyebrow="TYPESETTING" title="排版" close={close} /><div className="type-settings">

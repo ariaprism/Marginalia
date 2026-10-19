@@ -1,5 +1,5 @@
 const DB_NAME = 'marginalia'
-const DB_VERSION = 5
+const DB_VERSION = 6
 
 /**
  * 连接缓存。
@@ -68,6 +68,10 @@ function openFresh(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains('syncState')) {
         db.createObjectStore('syncState', { keyPath: 'remoteUserId' })
+      }
+      if (!db.objectStoreNames.contains('readerSessions')) {
+        const store = db.createObjectStore('readerSessions', { keyPath: 'id' })
+        store.createIndex('bookId', 'bookId', { unique: false })
       }
       if (!db.objectStoreNames.contains('readerProgress')) {
         const readerProgressStore = db.createObjectStore('readerProgress', { keyPath: 'id' })

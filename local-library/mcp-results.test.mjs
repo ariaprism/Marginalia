@@ -16,7 +16,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const directory = mkdtempSync(join(tmpdir(), 'marginalia-mcp-results-'))
 process.env.MARGINALIA_LOCAL_DIR = directory
-const { openLibrary, putRecord } = await import('./db.mjs')
+const { openLibrary, putRecord, readCollection } = await import('./db.mjs')
 const state = { understanding: '灯与雨。', feeling: '安静。', questions: ['谁在等雨？'], attention: ['灯'] }
 const paragraph = '雨敲了三下窗。' + '灯随后亮起来。'.repeat(60)
 const humanLocator = { bookId:'fixture-book', position:{chapterIndex:0,elementPath:[0],textOffset:0,selectedText:'雨敲了三下窗。',beforeContext:'',afterContext:''} }
@@ -48,17 +48,19 @@ async function readingLoop(client, cloud) {
   assert.equal((cloud?afterRead.reader.position:afterRead.reader.progress).cursor,window.endCursor)
   assert.equal(afterRead.reader.state,null)
   assert.equal(afterRead.reader.recovery.needed,true)
-  const random = await textCall(client,'random_annotations',{bookId,limit:5})
+  const random = await textCall(client,'random_annotations',{bookId,...identity,limit:5})
   assert.deepEqual(random.annotations.map(x=>x.id),['human-note'])
-  const peek = await textCall(client,'read',{bookId,...identity,cursor:random.annotations[0].cursor,mode:'browse',length:200})
+  const peek = await textCall(client,'read',{bookId,...identity,cursor:random.annotations[0].cursor,sessionId:random.annotations[0].sessionId,mode:'browse',length:200})
   assert.equal(peek.progressSaved,false)
+  await textCall(client,'close_book',{bookId,...identity,sessionId:peek.sessionId,cursor:peek.endCursor,state:{...state,understanding:'临时翻看'}})
   const afterPeek=await textCall(client,'get_book',{bookId,...identity})
   assert.equal((cloud?afterPeek.reader.position:afterPeek.reader.progress).cursor,window.endCursor)
+  assert.equal(afterPeek.reader.state,null)
   assert.equal(window.atEnd, false)
   assert.ok(window.nextCursor)
   assert.match(window.blocks[0].text, /雨敲了三下窗。/)
   if (cloud) assert.ok(window.sessionId)
-  const session = cloud ? { sessionId: window.sessionId } : {}
+  const session = { sessionId: window.sessionId }
   const { trace } = await textCall(client, 'leave_trace', {
     bookId, ...identity, ...session, rangeId: window.blocks[0].rangeId,
     quote: '雨敲了三下窗。', kind: 'annotation', text: '我想记住这场雨。',
@@ -88,6 +90,7 @@ async function readingLoop(client, cloud) {
   const invalid=await client.callTool({name:'read',arguments:{bookId,...identity,cursor:'p1:99:0:0'}})
   assert.equal(invalid.isError,true)
   assert.deepEqual(reopened.reader.state.questions, state.questions)
+  return {sessionId:window.sessionId}
 }
 
 test.after(() => rmSync(directory, { recursive: true, force: true }))
@@ -107,7 +110,12 @@ test('local STDIO: text-only client discovers books, reads, leaves a trace, clos
     putRecord(db,'highlights',{id:'human-highlight',bookId:book.id,locator:humanLocator})
     putRecord(db,'annotations',{id:'human-note',bookId:book.id,locator:humanLocator,text:'我的雨。',actor:'user'})
     putRecord(db,'annotations',{id:'other-book-note',bookId:'other',locator:humanLocator,text:'不该出现'})
-    await readingLoop(client, false)
+    const read=await readingLoop(client, false)
+    const visit=readCollection(db,'readerSessions').find(s=>s.id===read.sessionId)
+    assert.equal(visit.characterCount,400)
+    assert.equal(visit.traceCount,1)
+    assert.ok(visit.closedAt)
+    assert.equal(readCollection(db,'readerTraces')[0].sessionId,visit.id)
   } finally {
     await client.close()
     db.close()
@@ -134,8 +142,8 @@ function cloudFixture() {
         insert(value) { insert = value; return q },
         update(value) { update = value; return q },
         then(resolve, reject) {
-          if (insert) rows[table].push({ id: randomUUID(), ...insert })
-          let found = rows[table].filter((row) => filters.every((filter) => filter(row)))
+          if (insert) rows[table].push({ id: randomUUID(), ...(table==='reader_sessions'?{mode:'reading',character_count:0,trace_count:0,started_at:new Date().toISOString()}:{}), ...insert })
+          let found = insert ? [rows[table].at(-1)] : rows[table].filter((row) => filters.every((filter) => filter(row)))
           if (slice) found = found.slice(...slice)
           if (update) found.forEach((row) => Object.assign(row, update))
           return Promise.resolve({ data: single ? found[0] ?? null : found, error: null }).then(resolve, reject)
@@ -145,13 +153,20 @@ function cloudFixture() {
     },
     async rpc(name, input) {
       if (name === 'record_ai_reader_window') {
+        const visit=rows.reader_sessions.find(x=>x.id===input.p_session_id&&x.owner_id===input.p_owner_id&&x.reader_id===input.p_reader_id&&x.book_id===input.p_book_id&&!x.closed_at)
+        if(!visit)return {data:null,error:{message:'reader session not found'}}
+        Object.assign(visit,{end_cursor:input.p_cursor,end_locator:input.p_locator,character_count:visit.character_count+input.p_character_count})
         const existing = rows.reader_progress.find(x=>x.owner_id===input.p_owner_id && x.reader_id===input.p_reader_id && x.book_id===input.p_book_id)
-        if (!input.p_save_progress || (existing?.cursor??null)!==input.p_expected_cursor) return {data:false,error:null}
+        if (visit.mode!=='reading' || !input.p_save_progress || (existing?.cursor??null)!==input.p_expected_cursor) return {data:false,error:null}
         const value={owner_id:input.p_owner_id,reader_id:input.p_reader_id,book_id:input.p_book_id,cursor:input.p_cursor,locator:input.p_locator,updated_at:new Date().toISOString()}
         if(existing)Object.assign(existing,value);else rows.reader_progress.push(value)
         return {data:true,error:null}
       }
+      if(name==='increment_ai_reader_session_trace'){const s=rows.reader_sessions.find(x=>x.id===input.p_session_id);if(s)s.trace_count++}
       if (name === 'close_ai_reader_session') {
+        const visit=input.p_session_id?rows.reader_sessions.find(x=>x.id===input.p_session_id&&!x.closed_at):undefined
+        if(input.p_session_id&&!visit)return {data:null,error:{message:'reader session not found'}}
+        if(visit){Object.assign(visit,{closed_at:input.p_now,state_snapshot:input.p_state,end_cursor:input.p_cursor,end_locator:input.p_locator});if(visit.mode!=='reading')return {data:null,error:null}}
         const base = { owner_id: input.p_owner_id, reader_id: input.p_reader_id, book_id: input.p_book_id }
         rows.reader_progress.splice(0, rows.reader_progress.length, { ...base, cursor: input.p_cursor, updated_at: input.p_now })
         rows.reader_states.splice(0, rows.reader_states.length, { ...base, ...input.p_state, cursor:input.p_cursor, locator:input.p_locator, updated_at: input.p_now })
@@ -195,7 +210,12 @@ test('cloud handlers: text-only client completes the same loop, including sessio
     rows.annotations.push({id:'other-room-note',owner_id:'other-owner',book_id:book.id,locator:humanLocator,text:'不可见'})
     rows.annotations.push({id:'deleted-note',owner_id:'fixture-owner',book_id:book.id,locator:humanLocator,text:'已删',deleted_at:'2026-01-01'})
     rows.annotations.push({id:'drifted-note',owner_id:'fixture-owner',book_id:book.id,locator:{...humanLocator,position:{...humanLocator.position,selectedText:'不存在的句子'}},text:'漂移'})
-    await readingLoop(client, true)
+    const read=await readingLoop(client, true)
+    const visit=rows.reader_sessions.find(s=>s.id===read.sessionId)
+    assert.equal(visit.character_count,400)
+    assert.equal(visit.trace_count,1)
+    assert.ok(visit.closed_at)
+    assert.equal(rows.reader_traces[0].session_id,visit.id)
   } finally {
     await client.close()
     await server.close()

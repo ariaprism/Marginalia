@@ -205,4 +205,21 @@ describe('AI Reader 只读应用服务', () => {
     expect((await getBookOverview(book.id,'g')).reader.position?.cursor).toBe(next.endCursor)
   })
 
+  it('连续窗口归在同次来访，翻看合书不覆盖顺读位置和理解',async()=>{
+    const book=await seedBook()
+    const first=await readBookWindow(book.id,{readerId:'g',length:200})
+    const second=await readBookWindow(book.id,{readerId:'g',length:200,sessionId:first.sessionId})
+    const visits=await withTransaction<import('../../domain/reader').ReaderSession[]>('readerSessions','readonly',s=>s.getAll())
+    expect(visits).toHaveLength(1)
+    expect(visits[0].characterCount).toBe(400)
+    await closeBook({bookId:book.id,readerId:'g',cursor:second.endCursor,sessionId:second.sessionId,state:{understanding:'顺读理解',feeling:'',questions:[],attention:[]}})
+    const browse=await readBookWindow(book.id,{readerId:'g',cursor:'p1:1:1:0',mode:'browse',length:200})
+    await closeBook({bookId:book.id,readerId:'g',cursor:browse.endCursor,sessionId:browse.sessionId,state:{understanding:'翻阅的余记',feeling:'',questions:[],attention:[]}})
+    const overview=await getBookOverview(book.id,'g')
+    expect(overview.reader.position?.cursor).toBe(second.endCursor)
+    expect(overview.reader.state?.understanding).toBe('顺读理解')
+    const after=await withTransaction<import('../../domain/reader').ReaderSession[]>('readerSessions','readonly',s=>s.getAll())
+    expect(after.find(s=>s.id===browse.sessionId)).toMatchObject({mode:'browsing',state:{understanding:'翻阅的余记'}})
+  })
+
 })

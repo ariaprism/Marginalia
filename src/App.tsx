@@ -87,6 +87,10 @@ import {
 } from './reader/sentenceAnchor'
 import { orderedTraceNotes, traceAtSentence, type NoteEntry, type Trace } from './reader/trace'
 import { pageAtTextOffset, textOffsetAtPage } from './reader/pageTextAnchor'
+import { usePresence } from './features/presence/usePresence'
+import { RoomPresence, StateSlip } from './features/presence/Presence'
+import { readerName, stateHasWords } from './features/presence/model'
+import type { ReaderState } from './domain/reader'
 import './App.css'
 
 
@@ -246,6 +250,12 @@ function App() {
   currentBookIdRef.current = roomBook.id
 
   const booksState = useBooks(booksRevision)
+  const presence = usePresence(booksRevision)
+  const [stateSlip,setStateSlip] = useState<ReaderState | null>(null)
+  const [companionPeek,setCompanionPeek] = useState(false)
+  const readerStops = presence.progress.filter(p=>p.bookId===roomBook.id)
+  const readerStates = presence.states.filter(p=>p.bookId===roomBook.id)
+  const openStateSlip=(state:ReaderState)=>setStateSlip(state)
 
   const segmentedChapters = useMemo(() => segmentChapters(readerChapters), [readerChapters])
 
@@ -840,12 +850,13 @@ function App() {
     target:
       | { kind: 'resume' }
       | { kind: 'chapter'; chapterIndex: number }
-      | { kind: 'locator'; locator: Locator },
+      | { kind: 'locator'; locator: Locator; preview?: boolean },
     rememberOpening = true,
     resetResumePosition = false,
   ) => {
     if (rememberOpening) rememberBookOpened(book, true)
     setRoomBook(book.status === 'wish' ? { ...book, status: 'reading', statusLabel: '在读' } : book)
+    setCompanionPeek(target.kind === 'locator' && !!target.preview)
     setRoomMenuOpen(false)
     setDeleteBookDialogOpen(false)
     setReaderChaptersReady(false)
@@ -882,7 +893,7 @@ function App() {
         } else if (target.kind === 'locator') {
           // 痕迹入口携带稳定定位，等动态分页完成后再落到原句所在页。
           // 已有阅读位置时只算临时翻看，不覆盖“上次读到”。
-          resumeEligibleRef.current = !savedProgress
+          resumeEligibleRef.current = target.preview ? false : !savedProgress
           setPendingLocator(target.locator)
           setPendingChapter(null)
         } else {
@@ -1365,6 +1376,7 @@ function App() {
   }
 
   browserBackHandlerRef.current = () => {
+    if (stateSlip) { setStateSlip(null); return true }
     if (noteMenuTargetId) { setNoteMenuTargetId(null); return true }
     if (noteComposerOpen) { closeNoteSheet(); return true }
     if (activeTrace) { setActiveTrace(null); return true }
@@ -1486,7 +1498,9 @@ function App() {
             <q>{resumeQuote || '这本书还在等待第一次翻开。'}</q>
             <span>{hasChapters ? (currentProgress ? '从这里继续' : '从头开始读') : '尚无阅读位置'} <ChevronRight /></span>
           </button>
+          <RoomPresence progress={readerStops} states={readerStates} chapters={readerChapters} companionLabel={companionLabel} onState={openStateSlip} onJump={locator=>openReader(roomBook,{kind:'locator',locator,preview:true},false)} />
         </section>
+        {stateSlip&&<StateSlip name={readerName(stateSlip.readerId,companionLabel)} state={stateSlip} onClose={()=>setStateSlip(null)} />}
         {hasChapters && (
           <section className="room-chapters">
             <div className="room-section-title"><ChapterTraceMark /><h2>章节与痕迹</h2></div>
@@ -1496,7 +1510,7 @@ function App() {
               return (
                 <div className={`room-chapter-group${chapter.chapter ? ' has-chapter-label' : ''}`} key={chapter.title}>
                   <button className="room-chapter-heading" type="button" onClick={() => openReaderAtChapter(index)}>
-                    {chapter.chapter && <span>{chapter.chapter}</span>}<strong>{chapter.title}</strong><small>{chapterTraces.length ? `${chapterTraces.length} 条痕迹` : '尚无痕迹'}</small><ChevronRight />
+                    {chapter.chapter && <span>{chapter.chapter}</span>}<strong>{chapter.title}{readerStops.some(p=>p.locator.position.chapterIndex===index)&&<i className="companion-toc-dot" aria-label="共读者停在这一章" />}</strong><small>{chapterTraces.length ? `${chapterTraces.length} 条痕迹` : '尚无痕迹'}</small><ChevronRight />
                   </button>
                   {chapterTraces.length > 0 && (
                     <div className="room-trace-list">
@@ -1617,6 +1631,7 @@ function App() {
             '--reader-font-family': `var(--font-reading-${readerTypeface})`,
           } as React.CSSProperties}
         >
+          {readerStates.filter(state=>state.locator&&stateHasWords(state)&&pageForLocator(state.locator)===pageIndex).map(state=><button type="button" key={state.readerId} className="companion-paper-sign" onClick={event=>{event.stopPropagation();openStateSlip(state)}} aria-label={`打开${readerName(state.readerId,companionLabel)}的合书纸签`}>{readerName(state.readerId,companionLabel)}</button>)}
           <div className="page-grain" aria-hidden="true" />
           <div className="running-header">{[currentChapter.chapter, currentChapter.title].filter(Boolean).join(' · ')}</div>
           <div className="reader-text-viewport" ref={viewportRef}>
@@ -1746,7 +1761,10 @@ function App() {
           </div>
         )}
 
+        {stateSlip&&<StateSlip name={readerName(stateSlip.readerId,companionLabel)} state={stateSlip} onClose={()=>setStateSlip(null)} />}
+        {companionPeek&&currentProgress&&returnPage===null&&<button type="button" className="companion-return-slip" onClick={()=>openReaderAtResume(roomBook,false)}>回到我的位置</button>}
         <ReaderControls
+          companionChapters={readerStops.map(p=>({index:p.locator.position.chapterIndex,name:readerName(p.readerId,companionLabel)}))}
           panel={panel}
           chromeVisible={chromeVisible}
           chapters={readerChapters}
@@ -1801,6 +1819,8 @@ function App() {
         onSelect={selectSidebarSection}
       />}
       {drawerPage ? <DrawerPageContent
+        revision={booksRevision}
+        onVisitOpen={(bookId,locator)=>{const book=loadedBooks.find(b=>b.id===bookId);if(book&&locator)openReader(book,{kind:'locator',locator,preview:true},false)}}
         section={drawerPage}
         callingCard={callingCard}
         companionLabel={companionLabel}

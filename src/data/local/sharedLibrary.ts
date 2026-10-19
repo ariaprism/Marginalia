@@ -4,7 +4,7 @@ import { openMarginaliaDB } from './db'
 const KEY_STORAGE = 'marginalia.local-library.key'
 export const SHARED_LIBRARY_CHANGED_EVENT = 'marginalia:shared-library-changed'
 const COLLECTIONS = [
-  'books', 'chapters', 'readerProgress', 'readerStates', 'readerTraces',
+  'books', 'chapters', 'readerProgress', 'readerStates', 'readerTraces', 'readerSessions',
   'readingProgress', 'bookmarks', 'profiles', 'highlights', 'annotations', 'marginalia',
 ] as const
 const BROWSER_OWNED_COLLECTIONS = [

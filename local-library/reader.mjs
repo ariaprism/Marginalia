@@ -108,7 +108,7 @@ export function getBook(db, bookId, readerId) {
   }
 }
 
-export function readBook(db, bookId, readerId, requestedCursor, length = 1200, mode = 'continue') {
+export function readBook(db, bookId, readerId, requestedCursor, length = 1200, mode = 'continue', sessionId) {
   getBook(db, bookId, readerId)
   const chapters = chaptersFor(db, bookId)
   const saved = findRecord(db, 'readerProgress', readerId + ':' + bookId)
@@ -121,6 +121,7 @@ export function readBook(db, bookId, readerId, requestedCursor, length = 1200, m
   const paragraph = chapters[current.chapterIndex]?.paragraphs[current.paragraphIndex]
   if (paragraph === undefined || current.textOffset > paragraph.length) throw new Error('阅读位置超出本书范围')
   const raw = current
+  const visit = openLocalVisit(db,bookId,readerId,encode(raw),sessionId,mode === 'browse' ? 'browsing' : 'reading')
   current = nextCursor(chapters, current)
   const target = Math.min(4000, Math.max(200, Math.round(length)))
   const blocks = []
@@ -142,12 +143,16 @@ export function readBook(db, bookId, readerId, requestedCursor, length = 1200, m
     current = nextCursor(chapters, { ...current, textOffset: endOffset })
   }
   const traces = tracesInBlocks(localHumanTraces(db, bookId), chapters, blocks)
-  if (count && mode !== 'browse') {
+  {
     db.exec('begin immediate')
-    try { saveProgress(db, bookId, readerId, endCursor); db.exec('commit') }
+    try {
+      if(count && mode !== 'browse')saveProgress(db, bookId, readerId, endCursor)
+      putRecord(db,'readerSessions',{...visit,endCursor,endLocator:localLocator(db,bookId,endCursor),characterCount:visit.characterCount+count,updatedAt:new Date().toISOString()})
+      db.exec('commit')
+    }
     catch (error) { db.exec('rollback'); throw error }
   }
-  return { bookId, blocks, traces, mode, progressSaved: count > 0 && mode !== 'browse', characterCount: count, endCursor, nextCursor: current ? encode(current) : null, atEnd: !current }
+  return { bookId, sessionId:visit.id, blocks, traces, mode, progressSaved: count > 0 && mode !== 'browse', characterCount: count, endCursor, nextCursor: current ? encode(current) : null, atEnd: !current }
 }
 
 export function leaveTrace(db, input) {
@@ -180,9 +185,16 @@ export function leaveTrace(db, input) {
       },
     },
     ...(text ? { text } : {}),
+    ...(input.sessionId ? {sessionId:input.sessionId} : {}),
     createdAt,
   }
-  putRecord(db, 'readerTraces', trace)
+  const visit=input.sessionId?openLocalVisit(db,input.bookId,input.readerId,'',input.sessionId):null
+  db.exec('begin immediate')
+  try {
+    putRecord(db, 'readerTraces', trace)
+    if(visit)putRecord(db,'readerSessions',{...visit,traceCount:visit.traceCount+1,updatedAt:createdAt})
+    db.exec('commit')
+  } catch(error){db.exec('rollback');throw error}
   return trace
 }
 
@@ -219,8 +231,13 @@ function saveProgress(db, bookId, readerId, value) {
 }
 
 export function closeBook(db, input) {
+  const visit=openLocalVisit(db,input.bookId,input.readerId,input.cursor,input.sessionId)
+  const endLocator=localLocator(db,input.bookId,input.cursor)
   db.exec('begin immediate')
   try {
+    const now=new Date().toISOString()
+    putRecord(db,'readerSessions',{...visit,endCursor:input.cursor,endLocator,state:input.state,closedAt:now,updatedAt:now})
+    if(visit.mode!=='reading'){db.exec('commit');return {saved:true,updatedAt:now}}
     const { updatedAt, locator } = saveProgress(db, input.bookId, input.readerId, input.cursor)
     putRecord(db, 'readerStates', { ...input.state, readerId: input.readerId, bookId: input.bookId, cursor: input.cursor, locator, updatedAt })
     db.exec('commit')
@@ -233,9 +250,34 @@ function localHumanTraces(db, bookId) {
   return humanTraces(filter('highlights'), filter('annotations'), readCollection(db, 'profiles')[0]?.userName)
 }
 
-export function randomAnnotations(db, bookId, limit = 1) {
+export function randomAnnotations(db, bookId, limit = 1, readerId = 'companion') {
   const books = readCollection(db, 'books').filter(b => !bookId || b.id === bookId)
   if (bookId && !books.length) throw new Error('找不到这本书')
   const map = new Map(books.map(b => [b.id, chaptersFor(db, b.id)]))
-  return { annotations: sampleAnnotations(localHumanTraces(db, bookId), map, limit), mode: 'browse', progressSaved: false, instruction: '用返回的 bookId 和 cursor 调用 read，mode=browse，翻看批注附近正文。' }
+  const annotations=sampleAnnotations(localHumanTraces(db, bookId), map, limit)
+  const visits=new Map()
+  for(const id of new Set(annotations.map(t=>t.bookId))){
+    const notes=annotations.filter(t=>t.bookId===id)
+    const visit=openLocalVisit(db,id,readerId,notes[0].cursor)
+    visit.mode='annotations';visit.viewedAnnotationIds=notes.map(t=>t.id);visit.endCursor=notes.at(-1).cursor;visit.endLocator=localLocator(db,id,visit.endCursor)
+    putRecord(db,'readerSessions',visit);visits.set(id,visit.id)
+  }
+  return { annotations: annotations.map(t=>({...t,sessionId:visits.get(t.bookId)})), mode: 'browse', progressSaved: false, instruction: '携带 sessionId、bookId 和 cursor 调用 read，mode=browse，翻阅结束可合书。' }
+}
+
+function localLocator(db,bookId,value){
+  const c=cursor(value),p=chaptersFor(db,bookId)[c.chapterIndex]?.paragraphs[c.paragraphIndex]
+  if(p===undefined||c.textOffset>p.length)throw new Error('阅读位置超出本书范围')
+  const start=Math.min(c.textOffset,Math.max(0,p.length-1))
+  return {bookId,position:{chapterIndex:c.chapterIndex,elementPath:[c.paragraphIndex],textOffset:start,selectedText:p.slice(start,start+80),beforeContext:p.slice(Math.max(0,start-60),start),afterContext:p.slice(start+80,start+140)}}
+}
+function openLocalVisit(db,bookId,readerId,value,sessionId,mode){
+  if(sessionId){
+    const s=findRecord(db,'readerSessions',sessionId)
+    if(!s||s.bookId!==bookId||s.readerId!==readerId||s.closedAt)throw new Error('阅读 session 不存在或已经合书')
+    if(mode&&s.mode!==mode&&!(mode==='browsing'&&s.mode==='annotations'))throw new Error('顺读和临时翻看请使用各自的 session')
+    return s
+  }
+  const now=new Date().toISOString()
+  return {id:randomUUID(),bookId,readerId,mode:mode??'reading',startCursor:value,startLocator:localLocator(db,bookId,value),startedAt:now,updatedAt:now,characterCount:0,traceCount:0,viewedAnnotationIds:[]}
 }

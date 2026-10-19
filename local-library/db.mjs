@@ -25,7 +25,7 @@ export function openLibrary() {
 }
 
 const allowedCollections = new Set([
-  'books', 'chapters', 'readerProgress', 'readerStates', 'readerTraces',
+  'books', 'chapters', 'readerProgress', 'readerStates', 'readerTraces', 'readerSessions',
   'readingProgress', 'bookmarks', 'profiles', 'highlights', 'annotations', 'marginalia',
 ])
 
@@ -139,7 +139,7 @@ export function findRecord(db, collection, id) {
 
 export function deleteReaderRecordsForBook(db, bookId, includeTraces = false) {
   const collections = includeTraces
-    ? ['readerProgress', 'readerStates', 'readerTraces']
+    ? ['readerProgress', 'readerStates', 'readerTraces', 'readerSessions']
     : ['readerProgress', 'readerStates']
   const remove = db.prepare([
     'delete from library_records',

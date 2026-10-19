@@ -28,6 +28,7 @@ export type ReaderState = {
 }
 
 export type ReaderTrace = {
+  sessionId?: string
   id: string
   readerId: string
   bookId: string
@@ -36,4 +37,24 @@ export type ReaderTrace = {
   /** 划线为空；批注必须有正文。 */
   text?: string
   createdAt: string
+}
+
+
+/** 一次真实阅读或翻阅活动；未合书不代表仍在线。 */
+export type ReaderSession = {
+  id: string
+  readerId: string
+  bookId: string
+  mode: 'reading' | 'browsing' | 'annotations' | 'unknown'
+  startedAt: string
+  updatedAt: string
+  closedAt?: string
+  startCursor?: string
+  endCursor?: string
+  startLocator?: Locator
+  endLocator?: Locator
+  characterCount: number
+  traceCount: number
+  viewedAnnotationIds: string[]
+  state?: Pick<ReaderState, 'understanding' | 'feeling' | 'questions' | 'attention'>
 }

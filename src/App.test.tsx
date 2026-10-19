@@ -1,3 +1,4 @@
+import { saveReaderSession } from './data/local/readerStore'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -763,4 +764,26 @@ describe('Marginalia visual prototype', () => {
     await waitFor(() => expect(secondSentence).not.toHaveClass('has-annotation'))
   }, 10_000)
 
+})
+
+
+it('查看共读者停留只临时翻页，纸签打开独立余记且保留自己的续读点',async()=>{
+  const restoreGeometry=mockPaginatedGeometry(rainRoomChapters[1].paragraphs[0].slice(0,10),1)
+  try {
+  const id=await seedTestBook({id:'presence-book'})
+  const ownLocator=createLocator(id,{chapterIndex:0,elementPath:[0],textOffset:0,...extractContext(rainRoomChapters[0].paragraphs[0],0,12)})
+  await saveReadingProgress(createReadingProgress(id,ownLocator,0.1,0.1))
+  const before=await getReadingProgress(id)
+  const locator=createLocator(id,{chapterIndex:1,elementPath:[0],textOffset:0,...extractContext(rainRoomChapters[1].paragraphs[0],0,12)})
+  await saveReaderSession({readerId:'xiaog',bookId:id,locator,cursor:'p1:1:0:0',updatedAt:'2026-10-19T00:00:00Z'},{readerId:'xiaog',bookId:id,cursor:'p1:1:0:0',locator,understanding:'灯在雨中亮起。',feeling:'',questions:[],attention:[],updatedAt:'2026-10-19T00:00:00Z'})
+  render(<App />)
+  fireEvent.click(await screen.findByRole('button',{name:'查看《雨夜书房》的书籍档案'}))
+  fireEvent.click(await screen.findByRole('button',{name:'看看小G的最近停留'}))
+  const sign=await screen.findByRole('button',{name:'打开小G的合书纸签'})
+  fireEvent.click(sign)
+  expect(await screen.findByText('灯在雨中亮起。')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button',{name:'收起合书余记'}))
+  fireEvent.click(screen.getByRole('button',{name:'返回书架'}))
+  await waitFor(async()=>expect((await getReadingProgress(id))?.locator).toEqual(before?.locator))
+  } finally { restoreGeometry() }
 })
